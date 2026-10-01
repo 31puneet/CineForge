@@ -16,15 +16,15 @@ This document is the definitive engineering roadmap for CineForge. It translates
 * [x] **Databases & Storage**: Integrate MongoDB (durable state), Redis (job queues/pubsub), and MinIO (S3-compatible object storage via `cgr.dev/chainguard/minio`) into Docker Compose.
 * [x] **Version Control**: Establish `.gitignore` and initialize Git repository.
 
-### [ ] Milestone 1: Backend Architecture Foundation
+### [x] Milestone 1: Backend Architecture Foundation
 **What it does:** Establishes the rigid layered architecture in Node.js (Routes -> Controllers -> Services -> Repositories) to prevent spaghetti code. Implements robust error handling and observability.
-* [ ] **Directory Structure**: Create `/src/api`, `/src/config`, `/src/middleware`, `/src/models`, `/src/services`, `/src/utils`.
-* [ ] **Environment Validation**: Implement `config.ts` using `zod` to strictly validate `process.env` on boot (requires `MONGO_URI`, `REDIS_URL`, `MINIO_ENDPOINT`, etc.). Crash immediately if invalid.
-* [ ] **Database Connection Pool**: Implement `database.ts` using `mongoose`. Add event listeners for `connected`, `error`, and `disconnected`. Implement exponential backoff for connection retries.
-* [ ] **Error Classes**: Define `AppError` base class. Extend into `ValidationError` (400), `UnauthorizedError` (401), `ForbiddenError` (403), `NotFoundError` (404), and `ConflictError` (409).
-* [ ] **Global Error Middleware**: Implement `errorHandler.ts`. Ensure it intercepts all thrown errors, formats a standard JSON response `{ error: { code, message, details } }`, and prevents stack trace leakage in production.
-* [ ] **Observability**: Implement `requestLogger.ts` middleware. Generate a unique UUID `x-request-id` for every incoming request. Attach it to `req` and include it in all logs and error responses for traceability.
-* [ ] **Health Checks**: Expand `/api/health` to actively ping MongoDB and Redis before returning 200 OK.
+* [x] **Directory Structure**: Create `/src/api`, `/src/config`, `/src/middleware`, `/src/models`, `/src/services`, `/src/utils`.
+* [x] **Environment Validation**: Implement `config.ts` using `zod` to strictly validate `process.env` on boot (requires `MONGO_URI`, `REDIS_URL`, `MINIO_ENDPOINT`, etc.). Crash immediately if invalid.
+* [x] **Database Connection Pool**: Implement `database.ts` using `mongoose`. Add event listeners for `connected`, `error`, and `disconnected`. Implement exponential backoff for connection retries.
+* [x] **Error Classes**: Define `AppError` base class. Extend into `ValidationError` (400), `UnauthorizedError` (401), `ForbiddenError` (403), `NotFoundError` (404), and `ConflictError` (409).
+* [x] **Global Error Middleware**: Implement `errorHandler.ts`. Ensure it intercepts all thrown errors, formats a standard JSON response `{ error: { code, message, details } }`, and prevents stack trace leakage in production.
+* [x] **Observability**: Implement `requestLogger.ts` middleware. Generate a unique UUID `x-request-id` for every incoming request. Attach it to `req` and include it in all logs and error responses for traceability.
+* [x] **Health Checks**: Expand `/api/health` to actively ping MongoDB and Redis before returning 200 OK.
 
 ### [ ] Milestone 2: Secure Authentication Boundary
 **What it does:** Implements Google OAuth 2.0 to establish user identity, issuing secure, HTTP-only JWTs. Protects backend resources.

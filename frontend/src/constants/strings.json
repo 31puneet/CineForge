@@ -1,0 +1,13 @@
+{
+  "login": {
+    "title": "Sign in to CineForge",
+    "googleLoginFailed": "Google Login Failed",
+    "testSecureRouteFail": "Test Secure Route (Should Fail)",
+    "welcomePrefix": "Welcome,",
+    "testSecureRoute": "Test Secure Route",
+    "logout": "Logout",
+    "secureRouteSuccess": "Secure route accessed successfully!",
+    "loginFailed": "Login failed",
+    "notAuthenticated": "Not authenticated"
+  }
+}

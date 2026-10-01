@@ -1,0 +1,38 @@
+Title: Agentic Film Studio
+
+Track: GenAI
+
+Description: Build a Agentic Film Studio solution in the Content Creation domain.
+
+Problem Statement: Personalized AI films from audio/scripts.
+
+Course Covered: DSA, DBMS, Fullstack
+
+Tech Stack: MERN + Python + AI/LLM APIs
+
+Core Learning goals: LangGraph + Multi-Agent, REST API design, full-stack MERN development, AI model evaluation and deployment
+
+Expected Output: A deployed full-stack AI application delivering: Agent workflow
+
+Industry: Media / Creator Economy
+
+Must Have Features: User authentication, Agent workflow, REST API, interactive dashboard
+
+Good to have features: Rich charts, unit & integration tests, dark mode, export to PDF/CSV, email notifications, admin analytics panel
+
+Evaluation Metrics: Dashboard Load <2s, Secure Authentication, CRUD Accuracy, Report Generation, Responsive UI
+
+Theme: Content Creation
+
+Reference Docs: Paper name: AutoGPT: An Autonomous GPT-4 Experiment (https://arxiv.org/abs/2306.05861), Dataset name: ReAct Benchmarks & TaskBench (https://github.com/ysymyf/TaskBench)
+
+Project Description: Build a Agentic Film Studio solution in the Content Creation domain.
+
+End Users Defined: Content creators, filmmakers, video producers
+
+Framework: React, Node.js, Express, MongoDB, FastAPI/Flask
+
+Suggested Library Tools: LangChain, OpenAI SDK, Pandas, JWT, Chart.js, Tailwind CSS, Axios
+
+Stretch Goal: Add real-time analytics, multi-tenant support, mobile PWA, automated tests, Docker containerization and CI/CD pipeline; add model drift monitoring.
+ 

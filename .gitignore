@@ -1,0 +1,21 @@
+# Node
+node_modules/
+dist/
+build/
+.env
+
+# Python
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.env
+
+# IDEs and OS
+.DS_Store
+.idea/
+.vscode/
+
+# Docker
+mongo_data/
+minio_data/

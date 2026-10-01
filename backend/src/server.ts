@@ -14,7 +14,10 @@ app.use(cookieParser());
 app.use(requestLogger);
 
 import authRoutes from './api/auth.routes';
+import projectRoutes from './api/project.routes';
+
 app.use('/api/auth', authRoutes);
+app.use('/api/projects', projectRoutes);
 
 import mongoose from 'mongoose';
 import { redis } from './config/redis';

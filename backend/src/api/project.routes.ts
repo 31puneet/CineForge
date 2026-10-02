@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { getProjects, getProject, createProject, updateProject, deleteProject } from './project.controller';
 import { requireAuth } from '../middleware/requireAuth';
 import assetRoutes from './asset.routes';
+import messageRoutes from './message.routes';
 
 const router = Router();
 
@@ -15,5 +16,6 @@ router.patch('/:id', updateProject);
 router.delete('/:id', deleteProject);
 
 router.use('/:projectId/assets', assetRoutes);
+router.use('/:projectId/messages', messageRoutes);
 
 export default router;

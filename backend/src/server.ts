@@ -21,6 +21,7 @@ app.use('/api/projects', projectRoutes);
 
 import mongoose from 'mongoose';
 import { redis } from './config/redis';
+import { storageService } from './services/storage.service';
 
 app.get('/api/health', async (req, res) => {
   const mongoStatus = mongoose.connection.readyState === 1 ? 'ok' : 'error';
@@ -57,6 +58,7 @@ app.use(errorHandler);
 
 const startServer = async () => {
   await connectDB();
+  await storageService.initializeBuckets();
   app.listen(env.PORT, () => {
     console.log(`Backend server listening on port ${env.PORT}`);
   });

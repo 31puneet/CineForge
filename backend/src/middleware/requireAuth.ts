@@ -16,6 +16,7 @@ export const requireAuth = async (req: Request, res: Response, next: NextFunctio
   const token = req.cookies?.token;
 
   if (!token) {
+    console.error('[requireAuth] Missing token cookie');
     throw new UnauthorizedError('Authentication required');
   }
 
@@ -24,12 +25,14 @@ export const requireAuth = async (req: Request, res: Response, next: NextFunctio
     const user = await User.findById(payload.id).select('-__v'); 
     
     if (!user) {
+      console.error('[requireAuth] User not found in database for ID:', payload.id);
       throw new UnauthorizedError('User no longer exists');
     }
 
     req.user = user;
     next();
   } catch (error) {
+    console.error('[requireAuth] Token verification failed:', error);
     throw new UnauthorizedError('Invalid or expired token');
   }
 };

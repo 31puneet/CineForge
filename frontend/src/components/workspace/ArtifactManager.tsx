@@ -1,4 +1,6 @@
-import { Folder, Search, FileText, Image as ImageIcon, Video, Mic, ChevronRight, Upload } from 'lucide-react';
+import { useRef } from 'react';
+import { Folder, Search, ChevronRight, Upload, Loader2 } from 'lucide-react';
+import { useAssetUpload } from '../../hooks/useAssetUpload';
 import strings from '../../constants/strings.json';
 
 interface ArtifactManagerProps {
@@ -6,13 +8,48 @@ interface ArtifactManagerProps {
 }
 
 export function ArtifactManager({ project }: ArtifactManagerProps) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const { isUploading, error, uploadAsset } = useAssetUpload();
+
+  const projectId = project?.id || project?._id;
+
+  const handleUploadClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !projectId) return;
+
+    const asset = await uploadAsset(projectId, file);
+    if (asset) {
+      alert('Asset uploaded successfully!');
+    } else if (error) {
+      alert(`Upload failed: ${error}`);
+    }
+
+    // Reset the file input so the same file can be re-selected
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
   return (
     <div className="h-full bg-[#E5DFD3] border-l border-stone-300 flex flex-col py-6 px-4">
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-lg font-bold text-stone-900 tracking-tight">{strings.workspace.artifactManager.title}</h2>
-        <button className="p-1.5 bg-stone-900 text-white rounded-lg hover:bg-orange-600 transition-colors" title={strings.workspace.artifactManager.uploadAsset}>
-          <Upload className="w-4 h-4" />
+        <input 
+          type="file" 
+          ref={fileInputRef} 
+          onChange={handleFileChange} 
+          className="hidden" 
+        />
+        <button 
+          onClick={handleUploadClick}
+          disabled={isUploading || !projectId}
+          className="p-1.5 bg-stone-900 text-white rounded-lg hover:bg-orange-600 transition-colors disabled:opacity-50" 
+          title={strings.workspace.artifactManager.uploadAsset}
+        >
+          {isUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
         </button>
       </div>
 

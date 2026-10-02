@@ -10,6 +10,11 @@ const envSchema = z.object({
   REDIS_URL: z.string().url().optional(),
   JWT_SECRET: z.string().min(10),
   GOOGLE_CLIENT_ID: z.string().min(1),
+  MINIO_ENDPOINT: z.string().default('cineforge-minio'),
+  MINIO_PORT: z.string().default('9000'),
+  MINIO_ACCESS_KEY: z.string().default('admin'),
+  MINIO_SECRET_KEY: z.string().default('password123'),
+  MINIO_USE_SSL: z.string().default('false'),
 });
 
 const _env = envSchema.safeParse(process.env);

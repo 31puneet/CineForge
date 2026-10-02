@@ -21,7 +21,7 @@ export const setTokenCookie = (res: Response, token: string) => {
   res.cookie('token', token, {
     httpOnly: true,
     secure: env.NODE_ENV === 'production',
-    sameSite: 'strict',
+    sameSite: 'lax',
     maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
   });
 };
@@ -30,7 +30,7 @@ export const clearTokenCookie = (res: Response) => {
   res.cookie('token', '', {
     httpOnly: true,
     secure: env.NODE_ENV === 'production',
-    sameSite: 'strict',
+    sameSite: 'lax',
     expires: new Date(0),
   });
 };

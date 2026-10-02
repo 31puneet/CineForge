@@ -41,13 +41,13 @@ This document is the definitive engineering roadmap for CineForge. It translates
 * [ ] **Project Controller & Routes**: Implement standard REST endpoints: `GET /api/projects`, `POST /api/projects`, `GET /api/projects/:id`, `PATCH /api/projects/:id`, `DELETE /api/projects/:id`.
 * [ ] **Authorization Enforcement**: Every endpoint must extract `req.user.id` and pass it to the repository. The system MUST return 404/403 if a user attempts to access a project they do not own.
 
-### [ ] Milestone 4: Frontend Application Shell & Routing
+### [x] Milestone 4: Frontend Application Shell & Routing
 **What it does:** Sets up the React architecture, state management, and the 25/50/25 layout mandated by the PRD.
-* [ ] **Router Setup**: Configure `react-router-dom`. Define routes: `/login`, `/dashboard`, `/project/:id`.
-* [ ] **Auth Context**: Create `AuthProvider.tsx` using React Context. Fetch `/api/auth/me` on mount. Manage `user`, `isLoading`, and `logout` function.
-* [ ] **Protected Routes**: Create `ProtectedRoute.tsx` wrapper that redirects unauthenticated users to `/login`.
-* [ ] **Layout Architecture**: Build `MainLayout.tsx`. Implement the rigid 25% (Sidebar), 50% (Main Workspace/Chat), 25% (Artifact/Properties panel) grid system using Tailwind CSS CSS Grid (`grid-cols-4`).
-* [ ] **Theming**: Configure Tailwind `theme.extend` with a cohesive, dark-mode focused color palette (glassmorphism accents, deep grays/blues) to hit the "Premium Design" requirement.
+* [x] **Router Setup**: Configure `react-router-dom`. Define routes: `/login`, `/dashboard`, `/project/:id`.
+* [x] **Auth Context**: Create `AuthProvider.tsx` using React Context. Fetch `/api/auth/me` on mount. Manage `user`, `isLoading`, and `logout` function.
+* [x] **Protected Routes**: Create `ProtectedRoute.tsx` wrapper that redirects unauthenticated users to `/login`.
+* [x] **Layout Architecture**: Build `MainLayout.tsx`. Implement the rigid 25% (Sidebar), 50% (Main Workspace/Chat), 25% (Artifact/Properties panel) grid system using Tailwind CSS CSS Grid (`grid-cols-4`).
+* [x] **Theming**: Configure Tailwind `theme.extend` with a cohesive, dark-mode focused color palette (glassmorphism accents, deep grays/blues) to hit the "Premium Design" requirement.
 
 ---
 

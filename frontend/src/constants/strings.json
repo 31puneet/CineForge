@@ -1,4 +1,7 @@
 {
+  "common": {
+    "loading": "Loading..."
+  },
   "login": {
     "title": "Sign in to CineForge",
     "googleLoginFailed": "Google Login Failed",
@@ -8,6 +11,324 @@
     "logout": "Logout",
     "secureRouteSuccess": "Secure route accessed successfully!",
     "loginFailed": "Login failed",
-    "notAuthenticated": "Not authenticated"
+    "notAuthenticated": "Not authenticated",
+    "termsText": "By continuing, you agree to our Terms of Service and Privacy Policy.",
+    "googleBtn": "Continue with Google",
+    "backBtn": "Back to Home"
+  },
+  "onboarding": {
+    "title": "Complete your profile",
+    "usernameLabel": "Username",
+    "usernamePlaceholder": "Enter your username",
+    "termsText": "I agree to the Terms & Conditions",
+    "submitBtn": "Start Creating"
+  },
+  "dashboard": {
+    "sidebar": {
+      "projects": "Projects",
+      "assetLibrary": "Asset Library",
+      "explore": "Explore",
+      "academy": "Academy",
+      "settings": "Settings",
+      "creditsLeft": "AI Generations Remaining",
+      "creditsCount": "0 / 0 Credits",
+      "viewPlan": "View Plan"
+    },
+    "header": {
+      "title": "Your Projects",
+      "searchPlaceholder": "Search projects...",
+      "createBtn": "Create New Project"
+    },
+    "projects": {
+      "createCard": "Create New Project",
+      "createCardSub": "Start AI Film Project",
+      "edited": "Edited"
+    },
+    "createModal": {
+      "title": "Create a New Project",
+      "nameLabel": "Project Name",
+      "namePlaceholder": "E.g., The Silent City",
+      "cancelBtn": "Cancel",
+      "createBtn": "Create Project",
+      "creatingBtn": "Creating..."
+    }
+  },
+  "landingPage": {
+    "nav": {
+      "logo": "CineForge",
+      "features": "Features",
+      "pipeline": "Pipeline",
+      "pricing": "Pricing",
+      "signIn": "Sign In"
+    },
+    "hero": {
+      "headline": "End-to-End AI Film Production, Engineered for Scale.",
+      "subheadline": "The industry-grade platform for professional content creators. Offering AI-powered tools for screenwriting, scene generation, cinematic rendering, and complete production management.",
+      "cta": "Start Your First Project"
+    },
+    "videos": [
+      {
+        "title": "1. Generate Scripts",
+        "description": "Collaborate with the AI agent to write compelling, structural narratives.",
+        "src": "/Card_1_Video.mp4"
+      },
+      {
+        "title": "2. Render Scenes",
+        "description": "AI-powered cinematic rendering directly from your script elements.",
+        "src": "/Card_2_Video.mp4"
+      },
+      {
+        "title": "3. Assemble Video",
+        "description": "Automated assembly, transitions, voiceovers, and final rendering.",
+        "src": "/Card_3_Video.mp4"
+      }
+    ],
+    "journey": {
+      "title": "From Idea to Final Cut",
+      "subtitle": "A seamless six-step production pipeline that takes you from a blank canvas to a polished film — with AI handling the heavy lifting at every stage.",
+      "steps": [
+        {
+          "step": "01",
+          "label": "Create Project",
+          "description": "Set up your film project with a name, duration, and creative brief."
+        },
+        {
+          "step": "02",
+          "label": "Script Generation",
+          "description": "The Script Agent structures your prompt into a shot-by-shot narrative plan."
+        },
+        {
+          "step": "03",
+          "label": "Character Design",
+          "description": "The Character Agent generates consistent visual characters from your script."
+        },
+        {
+          "step": "04",
+          "label": "Voiceover & Dialogue",
+          "description": "The Voiceover Agent produces dialogue audio for each character."
+        },
+        {
+          "step": "05",
+          "label": "Shot-by-Shot Rendering",
+          "description": "The Video Agent renders each scene with full cinematic quality."
+        },
+        {
+          "step": "06",
+          "label": "Final Assembly",
+          "description": "The Editor Agent stitches approved clips into a complete film."
+        }
+      ]
+    },
+    "agents": {
+      "title": "Five Specialized AI Agents, One Unified Pipeline",
+      "subtitle": "Each agent is purpose-built for a single production stage. They pass approved artifacts downstream in a deterministic chain — no ambiguity, no lost context.",
+      "list": [
+        {
+          "name": "Script Agent",
+          "role": "Narrative Architect",
+          "input": "Prompt + References + Duration",
+          "output": "Structured Script",
+          "description": "Interprets your creative brief, identifies story elements and characters, structures the narrative into generation-ready shots, and allocates dialogue and visual descriptions according to the target duration.",
+          "details": [
+            "Parses user prompt and reference materials",
+            "Structures story into scenes and individual shots",
+            "Allocates dialogue per character per shot",
+            "Respects target duration and provider constraints",
+            "Outputs a versioned, reviewable script artifact"
+          ],
+          "approval": "You review the full script. Approve to proceed, or request revisions with specific feedback. Only the approved version flows to the next agent."
+        },
+        {
+          "name": "Character Agent",
+          "role": "Visual Designer",
+          "input": "Approved Script",
+          "output": "Character Visuals",
+          "description": "Extracts all characters from the approved script, allows you to configure appearance references, and generates consistent character visuals that maintain identity across every scene.",
+          "details": [
+            "Extracts character list from approved script",
+            "Accepts user-provided reference images",
+            "Generates consistent character appearances",
+            "Ensures visual continuity across all scenes",
+            "Supports targeted regeneration of individual characters"
+          ],
+          "approval": "Review each character individually. Reject and regenerate specific characters without losing approved ones."
+        },
+        {
+          "name": "Voiceover Agent",
+          "role": "Audio Producer",
+          "input": "Approved Characters",
+          "output": "Voice Assets",
+          "description": "Configures unique voice profiles for each character, processes the dialogue from the approved script, and generates high-quality audio segments that match the timing and emotion of each scene.",
+          "details": [
+            "Assigns unique voice profiles per character",
+            "Processes dialogue text from approved script",
+            "Generates audio segments per shot",
+            "Supports preview, re-recording, and fine-tuning",
+            "Batch or per-segment review workflow"
+          ],
+          "approval": "Preview audio segments individually. Approve the full batch or regenerate specific dialogue lines."
+        },
+        {
+          "name": "Video Agent",
+          "role": "Cinematographer",
+          "input": "Approved Voiceovers",
+          "output": "Video Shots",
+          "description": "Renders individual video shots using the full approved context — script, characters, and audio. Runs parallel generation jobs tracked via Redis queues, with per-shot review and targeted regeneration.",
+          "details": [
+            "Consumes all upstream approved artifacts",
+            "Parallel shot generation via Redis job queues",
+            "Real-time job status tracking and progress",
+            "Handles background music where supported",
+            "Per-shot review with targeted regeneration"
+          ],
+          "approval": "Review each shot individually. Approve, reject, or regenerate specific shots while keeping others intact."
+        },
+        {
+          "name": "Editor Agent",
+          "role": "Post-Production",
+          "input": "Approved Clips",
+          "output": "Final Video",
+          "description": "Assembles all approved video shots, applies transitions between scenes, overlays the approved voiceover audio, and produces the final rendered film ready for export.",
+          "details": [
+            "Assembles approved clips in narrative order",
+            "Applies scene transitions automatically",
+            "Overlays voiceover and background audio",
+            "Produces final rendered video output",
+            "Confirmation step before final assembly"
+          ],
+          "approval": "Confirm the final assembly. This is a compilation step, not a creative rewrite stage."
+        }
+      ]
+    },
+    "projectManager": {
+      "title": "Your Creative Command Center",
+      "subtitle": "Every asset, every version, every decision — organized and accessible in one persistent workspace.",
+      "features": [
+        {
+          "title": "Project Folders",
+          "description": "Create, rename, and manage separate film projects. Each project maintains its own isolated assets, conversations, and workflow state."
+        },
+        {
+          "title": "Version Control",
+          "description": "Every script revision, character iteration, and video re-render is tracked. Compare versions side-by-side and roll back to any prior state."
+        },
+        {
+          "title": "Artifact Browser",
+          "description": "Browse scripts, character sheets, voiceover clips, video shots, and the final film — all organized by production stage within your project."
+        },
+        {
+          "title": "Review & Approval",
+          "description": "Approve, reject, or request changes at every stage. Only approved artifacts flow downstream. You maintain complete creative authority."
+        },
+        {
+          "title": "Session Persistence",
+          "description": "Close your browser mid-render and come back tomorrow. Your workflow state, pending approvals, and running jobs are all preserved."
+        },
+        {
+          "title": "Multi-Tab Workspace",
+          "description": "Open multiple artifacts simultaneously. Review your script in one tab while inspecting generated characters in another."
+        }
+      ]
+    },
+    "pricing": {
+      "title": "Simple, Transparent Pricing",
+      "subtitle": "Start free. Scale when you're ready.",
+      "plans": [
+        {
+          "name": "Free",
+          "price": "--",
+          "period": "",
+          "highlight": false,
+          "features": [
+            "1 active project",
+            "720p video output",
+            "Community support",
+            "5 generations / month",
+            "Basic voice library"
+          ]
+        },
+        {
+          "name": "Pro",
+          "price": "--",
+          "period": "",
+          "highlight": true,
+          "features": [
+            "10 active projects",
+            "1080p video output",
+            "Priority rendering queue",
+            "50 generations / month",
+            "Extended voice library",
+            "Version history (30 days)"
+          ]
+        },
+        {
+          "name": "Max",
+          "price": "--",
+          "period": "",
+          "highlight": false,
+          "features": [
+            "Unlimited projects",
+            "4K video output",
+            "Dedicated rendering",
+            "Unlimited generations",
+            "Full voice library",
+            "Unlimited version history",
+            "Priority support"
+          ]
+        },
+        {
+          "name": "Enterprise",
+          "price": "Custom",
+          "period": "",
+          "highlight": false,
+          "features": [
+            "Everything in Max",
+            "Custom integrations",
+            "SLA guarantees",
+            "Dedicated account manager",
+            "On-premise deployment option",
+            "Team collaboration",
+            "Advanced analytics"
+          ]
+        }
+      ]
+    },
+    "footer": {
+      "copyright": "© 2024 CineForge Studio. All rights reserved."
+    }
+  },
+  "workspace": {
+    "sidebar": {
+      "backToDashboard": "Back to Dashboard",
+      "loading": "Loading...",
+      "activeChat": "Active Chat",
+      "sceneList": "Scene List",
+      "characters": "Characters",
+      "projectSettings": "Project Settings",
+      "chatHistory": "Chat History",
+      "noChatHistory": "No chat history yet."
+    },
+    "agentChat": {
+      "tabTitle": "Agent Chat",
+      "projectInitialized": "Project \"{title}\" initialized",
+      "welcomeMessage": "Hi! I am the Director Agent. I can help you orchestrate your film. \n\nTo get started, tell me your story idea, or drop a script reference in the chat. We will begin with the Script Agent to finalize the narrative.",
+      "inputPlaceholder": "Describe your film idea..."
+    },
+    "artifactManager": {
+      "title": "Project Artifacts",
+      "uploadAsset": "Upload Asset",
+      "searchPlaceholder": "Search artifacts...",
+      "folders": {
+        "scripts": "Scripts",
+        "characters": "Characters",
+        "audio": "Audio & Music",
+        "videoClips": "Video Clips"
+      },
+      "noAssets": "No generated assets yet"
+    },
+    "projectPage": {
+      "loading": "Loading workspace...",
+      "notFound": "Project not found."
+    }
   }
 }

@@ -80,14 +80,14 @@ This document is the definitive engineering roadmap for CineForge. It translates
 
 ## Phase 3: The 5-Stage Agent Pipeline (HITL Focused)
 
-### [ ] Milestone 8: Stage 1 - Script Agent & Review
+### [x] Milestone 8: Stage 1 - Script Agent & Review
 **What it does:** Transforms user prompts into a highly structured JSON script, pausing for human approval.
-* [ ] **Script Prompt Engineering**: Write the system prompt in FastAPI instructing the LLM to output a precise JSON schema containing global narrative, and a list of `shots` (id, description, duration_sec, dialogue, speaker).
-* [ ] **Script Generation Node**: Implement `generate_script` LangGraph node. It calls the LLM, validates the JSON output using Pydantic, and updates `FilmGraphState.script_data`.
-* [ ] **State Transition**: LangGraph transitions to an `__end__` or `wait_for_human` pseudo-state after generation, signaling Node.js.
-* [ ] **Script UI (Right Panel)**: Build the React component for the 25% right panel. It reads the structured script and displays it in a readable format (Shot list, durations, dialogue).
-* [ ] **Approval API**: Implement `/api/projects/:id/script/approve` and `/api/projects/:id/script/reject` in Node.js. 
-* [ ] **Regeneration Logic**: If rejected, send feedback back to FastAPI. Graph routes back to `generate_script`, creating Version 2 while preserving Version 1 in Mongo.
+* [x] **Script Prompt Engineering**: Write the system prompt in FastAPI instructing the LLM to output a precise JSON schema containing global narrative, and a list of `shots` (id, description, duration_sec, dialogue, speaker).
+* [x] **Script Generation Node**: Implement `generate_script` LangGraph node. It calls the LLM, validates the JSON output using Pydantic, and updates `FilmGraphState.script_data`.
+* [x] **State Transition**: LangGraph transitions to an `__end__` or `wait_for_human` pseudo-state after generation, signaling Node.js.
+* [x] **Script UI (Right Panel)**: Build the React component for the 25% right panel. It reads the structured script and displays it in a readable format (Shot list, durations, dialogue).
+* [x] **Approval API**: Implement `/api/projects/:id/script/approve` and `/api/projects/:id/script/reject` in Node.js. 
+* [x] **Regeneration Logic**: If rejected, send feedback back to FastAPI. Graph routes back to `generate_script`, creating Version 2 while preserving Version 1 in Mongo.
 
 ### [ ] Milestone 9: Stage 2 - Character Generation & Review
 **What it does:** Extracts speakers from the script and generates consistent visual reference images for them.

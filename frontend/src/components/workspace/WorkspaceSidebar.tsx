@@ -37,10 +37,6 @@ export function WorkspaceSidebar({ project }: WorkspaceSidebarProps) {
           {strings.workspace.sidebar.sceneList}
         </button>
         <button className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-stone-600 hover:bg-stone-50 hover:text-stone-900 transition-colors">
-          <Users className="w-4 h-4" />
-          {strings.workspace.sidebar.characters}
-        </button>
-        <button className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-stone-600 hover:bg-stone-50 hover:text-stone-900 transition-colors">
           <Settings className="w-4 h-4" />
           {strings.workspace.sidebar.projectSettings}
         </button>

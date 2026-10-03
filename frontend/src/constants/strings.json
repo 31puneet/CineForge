@@ -328,7 +328,22 @@
     },
     "projectPage": {
       "loading": "Loading workspace...",
-      "notFound": "Project not found."
+      "notFound": "Project not found.",
+      "tabs": {
+        "chat": "Chat",
+        "script": "Script",
+        "approved": "(Approved)",
+        "review": "(Review)"
+      }
+    },
+    "scriptViewer": {
+      "noScript": "No script generated yet.",
+      "title": "Shooting Script",
+      "scene": "SCENE",
+      "unknownSpeaker": "UNKNOWN",
+      "requestRevisions": "Request Revisions",
+      "approveContinue": "Approve & Continue",
+      "scriptApproved": "Script Approved. Proceeding to Character Generation."
     }
   }
 }

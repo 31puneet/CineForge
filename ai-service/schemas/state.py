@@ -48,10 +48,14 @@ class ApprovalStates(TypedDict):
 # The massive state object for LangGraph
 class FilmGraphState(TypedDict):
     project_id: str
+    metadata: Dict[str, Any]
     messages: Annotated[List[Any], operator.add]
     current_stage: str
     
     script_data: Optional[ScriptData]
+    script_version: int
+    script_history: List[Dict[str, Any]]
+    
     characters: List[Character]
     voiceovers: List[Voiceover]
     video_shots: List[VideoShot]

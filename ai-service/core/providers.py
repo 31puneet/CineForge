@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import Any
+import json
 from langchain_google_genai import ChatGoogleGenerativeAI
 from core.config import settings
 
@@ -16,7 +17,7 @@ class BaseLLMProvider(ABC):
 
 
 class GeminiAdapter(BaseLLMProvider):
-    def __init__(self, model_name: str = "gemini-1.5-flash"):
+    def __init__(self, model_name: str = "gemini-3.5-flash"):
         self.llm = ChatGoogleGenerativeAI(
             model=model_name,
             google_api_key=settings.GEMINI_API_KEY,
@@ -26,8 +27,19 @@ class GeminiAdapter(BaseLLMProvider):
     def generate_text(self, prompt: str, **kwargs) -> str:
         response = self.llm.invoke(prompt)
         return str(response.content)
+        
+    async def astream_text(self, prompt: str, **kwargs):
+        async for chunk in self.llm.astream(prompt):
+            yield chunk.content
 
     def get_structured_output(self, prompt: str, schema: Any, **kwargs) -> Any:
-        # Langchain supports with_structured_output which handles the validation
-        structured_llm = self.llm.with_structured_output(schema)
-        return structured_llm.invoke(prompt)
+        prompt_with_schema = f"{prompt}\n\nPlease output valid JSON that conforms to this schema:\n{json.dumps(schema.model_json_schema())}"
+        response = self.llm.invoke(prompt_with_schema)
+        content = response.content.replace("```json", "").replace("```", "").strip()
+        return schema(**json.loads(content))
+        
+    async def aget_structured_output(self, prompt: str, schema: Any, **kwargs) -> Any:
+        prompt_with_schema = f"{prompt}\n\nPlease output ONLY valid JSON that conforms to this schema:\n{json.dumps(schema.model_json_schema())}"
+        response = await self.llm.ainvoke(prompt_with_schema)
+        content = response.content.replace("```json", "").replace("```", "").strip()
+        return schema(**json.loads(content))

@@ -5,9 +5,11 @@ import strings from '../../constants/strings.json';
 
 interface ArtifactManagerProps {
   project: any;
+  onSelectScript?: () => void;
+  hasScript?: boolean;
 }
 
-export function ArtifactManager({ project }: ArtifactManagerProps) {
+export function ArtifactManager({ project, onSelectScript, hasScript }: ArtifactManagerProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { isUploading, error, uploadAsset } = useAssetUpload();
 
@@ -73,8 +75,15 @@ export function ArtifactManager({ project }: ArtifactManagerProps) {
             <Folder className="w-4 h-4 text-orange-500" />
             {strings.workspace.artifactManager.folders.scripts}
           </button>
-          <div className="pl-9 mt-1 flex flex-col gap-1 hidden">
-            {/* Artifacts will go here */}
+          <div className="pl-9 mt-1 flex flex-col gap-1">
+            {hasScript && (
+              <button 
+                onClick={onSelectScript}
+                className="text-left text-sm text-stone-600 hover:text-orange-600 hover:bg-[#F3ECE5] px-2 py-1 rounded transition-colors"
+              >
+                v1_script.json
+              </button>
+            )}
           </div>
         </div>
 

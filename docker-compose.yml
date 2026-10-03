@@ -43,6 +43,7 @@ services:
       - /app/node_modules
     environment:
       - CHOKIDAR_USEPOLLING=true
+      - VITE_GOOGLE_CLIENT_ID=44764823582-a40es2ece62bg7v4mmsukbgvpb9kcqle.apps.googleusercontent.com
     depends_on:
       - backend
 
@@ -57,6 +58,16 @@ services:
       - /app/node_modules
     environment:
       - PORT=3000
+      - NODE_ENV=development
+      - MONGO_URI=mongodb://cineforge-mongo:27017/cineforge
+      - REDIS_URL=redis://cineforge-redis:6379
+      - JWT_SECRET=development_secret_key_change_in_production
+      - MINIO_ENDPOINT=cineforge-minio
+      - MINIO_PORT=9000
+      - MINIO_ACCESS_KEY=admin
+      - MINIO_SECRET_KEY=password123
+      - MINIO_USE_SSL=false
+      - GOOGLE_CLIENT_ID=44764823582-a40es2ece62bg7v4mmsukbgvpb9kcqle.apps.googleusercontent.com
     depends_on:
       - mongodb
       - redis

@@ -26,20 +26,20 @@ This document is the definitive engineering roadmap for CineForge. It translates
 * [x] **Observability**: Implement `requestLogger.ts` middleware. Generate a unique UUID `x-request-id` for every incoming request. Attach it to `req` and include it in all logs and error responses for traceability.
 * [x] **Health Checks**: Expand `/api/health` to actively ping MongoDB and Redis before returning 200 OK.
 
-### [ ] Milestone 2: Secure Authentication Boundary
+### [x] Milestone 2: Secure Authentication Boundary
 **What it does:** Implements Google OAuth 2.0 to establish user identity, issuing secure, HTTP-only JWTs. Protects backend resources.
-* [ ] **User Model**: Create `User.ts` Mongoose schema. Fields: `googleId` (String, unique, index), `email` (String, unique), `name` (String), `avatarUrl` (String), `role` (Enum: user/admin), `createdAt`, `updatedAt`.
-* [ ] **OAuth Flow Setup**: Integrate `google-auth-library`. Create `auth.service.ts` to handle token verification and user upsert logic.
-* [ ] **Session Management**: Create `jwt.utils.ts`. Implement `generateToken(userId)` and `verifyToken(token)`.
-* [ ] **Auth Routes**: Implement `/api/auth/google` (receives Google credential), `/api/auth/me` (returns current user profile), `/api/auth/logout` (clears cookie).
-* [ ] **Security Middleware**: Implement `requireAuth.ts`. It must extract the JWT from signed, HttpOnly, secure cookies, verify it, fetch the user, and attach `req.user`. Throw `UnauthorizedError` if invalid.
+* [x] **User Model**: Create `User.ts` Mongoose schema. Fields: `googleId` (String, unique, index), `email` (String, unique), `name` (String), `avatarUrl` (String), `role` (Enum: user/admin), `createdAt`, `updatedAt`.
+* [x] **OAuth Flow Setup**: Integrate `google-auth-library`. Create `auth.service.ts` to handle token verification and user upsert logic.
+* [x] **Session Management**: Create `jwt.utils.ts`. Implement `generateToken(userId)` and `verifyToken(token)`.
+* [x] **Auth Routes**: Implement `/api/auth/google` (receives Google credential), `/api/auth/me` (returns current user profile), `/api/auth/logout` (clears cookie).
+* [x] **Security Middleware**: Implement `requireAuth.ts`. It must extract the JWT from signed, HttpOnly, secure cookies, verify it, fetch the user, and attach `req.user`. Throw `UnauthorizedError` if invalid.
 
-### [ ] Milestone 3: Project & Workspace Data Layer
+### [x] Milestone 3: Project & Workspace Data Layer
 **What it does:** Implements the core `Project` entity, which acts as the hierarchical root for all workflows, scripts, characters, and videos.
-* [ ] **Project Model**: Create `Project.ts` schema. Fields: `userId` (ObjectId, ref: User, index), `title` (String), `status` (Enum: draft, active, completed, archived), `settings` (Mixed/Subdocument for aspect ratio, target duration).
-* [ ] **Project Repository**: Create `project.repository.ts` abstracting DB calls. Implement `findByUserId`, `findByIdAndUserId`, `create`, `update`, `delete`.
-* [ ] **Project Controller & Routes**: Implement standard REST endpoints: `GET /api/projects`, `POST /api/projects`, `GET /api/projects/:id`, `PATCH /api/projects/:id`, `DELETE /api/projects/:id`.
-* [ ] **Authorization Enforcement**: Every endpoint must extract `req.user.id` and pass it to the repository. The system MUST return 404/403 if a user attempts to access a project they do not own.
+* [x] **Project Model**: Create `Project.ts` schema. Fields: `userId` (ObjectId, ref: User, index), `title` (String), `status` (Enum: draft, active, completed, archived), `settings` (Mixed/Subdocument for aspect ratio, target duration).
+* [x] **Project Repository**: Create `project.repository.ts` abstracting DB calls. Implement `findByUserId`, `findByIdAndUserId`, `create`, `update`, `delete`.
+* [x] **Project Controller & Routes**: Implement standard REST endpoints: `GET /api/projects`, `POST /api/projects`, `GET /api/projects/:id`, `PATCH /api/projects/:id`, `DELETE /api/projects/:id`.
+* [x] **Authorization Enforcement**: Every endpoint must extract `req.user.id` and pass it to the repository. The system MUST return 404/403 if a user attempts to access a project they do not own.
 
 ### [x] Milestone 4: Frontend Application Shell & Routing
 **What it does:** Sets up the React architecture, state management, and the 25/50/25 layout mandated by the PRD.
@@ -53,28 +53,28 @@ This document is the definitive engineering roadmap for CineForge. It translates
 
 ## Phase 2: Agent Orchestration & Media Pipeline
 
-### [ ] Milestone 5: File Storage Abstraction (Node & MinIO)
+### [x] Milestone 5: File Storage Abstraction (Node & MinIO)
 **What it does:** Provides the backbone for handling large binaries (images, videos, PDFs) securely.
-* [ ] **MinIO Client**: Initialize `minio` SDK in `storage.service.ts` connecting to the Docker MinIO container using credentials from `.env`.
-* [ ] **Bucket Initialization**: On startup, ensure buckets exist (e.g., `cineforge-assets`, `cineforge-renders`). Set correct CORS policies on the buckets.
-* [ ] **Pre-signed URLs**: Implement logic to generate time-limited pre-signed URLs for `PUT` (uploading) and `GET` (viewing) operations. 
-* [ ] **Asset Model**: Create `Asset.ts` Mongoose schema to track metadata. Fields: `projectId`, `userId`, `type` (image/audio/video), `bucket`, `objectKey`, `mimeType`, `sizeBytes`, `version`.
-* [ ] **Upload API**: Create `/api/projects/:id/assets/upload-url`. Validate user ownership of project before granting upload access.
+* [x] **MinIO Client**: Initialize `minio` SDK in `storage.service.ts` connecting to the Docker MinIO container using credentials from `.env`.
+* [x] **Bucket Initialization**: On startup, ensure buckets exist (e.g., `cineforge-assets`, `cineforge-renders`). Set correct CORS policies on the buckets.
+* [x] **Pre-signed URLs**: Implement logic to generate time-limited pre-signed URLs for `PUT` (uploading) and `GET` (viewing) operations. 
+* [x] **Asset Model**: Create `Asset.ts` Mongoose schema to track metadata. Fields: `projectId`, `userId`, `type` (image/audio/video), `bucket`, `objectKey`, `mimeType`, `sizeBytes`, `version`.
+* [x] **Upload API**: Create `/api/projects/:id/assets/upload-url`. Validate user ownership of project before granting upload access.
 
-### [ ] Milestone 6: AI Engine Foundation (FastAPI & LangGraph)
+### [x] Milestone 6: AI Engine Foundation (FastAPI & LangGraph)
 **What it does:** Establishes the Python service that will execute the complex multi-agent film workflow.
-* [ ] **FastAPI Architecture**: Structure `/api/routes`, `/services`, `/agents`, `/schemas`, `/core`.
-* [ ] **State Models (Pydantic)**: Define the massive `FilmGraphState` TypedDict. It must track: `messages`, `current_stage`, `script_data`, `characters`, `voiceovers`, `video_shots`, and `approval_states`.
-* [ ] **Provider Adapters**: Create `BaseLLMProvider` interface. Implement `OpenAIAdapter` (or similar) extending it. This ensures we don't hardcode API calls in agent logic.
-* [ ] **Graph Definition**: Initialize the LangGraph `StateGraph`. Define dummy nodes for `script_agent`, `character_agent`, `voiceover_agent`, `video_agent`, and `editor_agent`.
-* [ ] **API Endpoints**: Create `/api/workflow/start` and `/api/workflow/resume` endpoints to accept commands from the Node backend.
+* [x] **FastAPI Architecture**: Structure `/api/routes`, `/services`, `/agents`, `/schemas`, `/core`.
+* [x] **State Models (Pydantic)**: Define the massive `FilmGraphState` TypedDict. It must track: `messages`, `current_stage`, `script_data`, `characters`, `voiceovers`, `video_shots`, and `approval_states`.
+* [x] **Provider Adapters**: Create `BaseLLMProvider` interface. Implement `OpenAIAdapter` (or similar) extending it. This ensures we don't hardcode API calls in agent logic.
+* [x] **Graph Definition**: Initialize the LangGraph `StateGraph`. Define dummy nodes for `script_agent`, `character_agent`, `voiceover_agent`, `video_agent`, and `editor_agent`.
+* [x] **API Endpoints**: Create `/api/workflow/start` and `/api/workflow/resume` endpoints to accept commands from the Node backend.
 
-### [ ] Milestone 7: The Chat System (User Context)
+### [x] Milestone 7: The Chat System (User Context)
 **What it does:** Implements the main communication interface between the Director (User) and the System.
-* [ ] **Message Model**: Create `Message.ts` schema. Fields: `projectId`, `role` (user/assistant/system), `content`, `metadata` (JSON for function calls or artifact links).
-* [ ] **Chat UI**: Build the central 50% panel. Implement message bubbles, auto-scrolling, and an input area supporting multi-line text and attachments.
-* [ ] **Chat API**: Create `/api/projects/:id/messages`. Implement POST (send message) and GET (history).
-* [ ] **Orchestration Link**: When a user sends a message, Node.js saves it to MongoDB, then makes an HTTP call to the FastAPI `/api/workflow/resume` endpoint, triggering the LangGraph state machine.
+* [x] **Message Model**: Create `Message.ts` schema. Fields: `projectId`, `role` (user/assistant/system), `content`, `metadata` (JSON for function calls or artifact links).
+* [x] **Chat UI**: Build the central 50% panel. Implement message bubbles, auto-scrolling, and an input area supporting multi-line text and attachments.
+* [x] **Chat API**: Create `/api/projects/:id/messages`. Implement POST (send message) and GET (history).
+* [x] **Orchestration Link**: When a user sends a message, Node.js saves it to MongoDB, then makes an HTTP call to the FastAPI `/api/workflow/resume` endpoint, triggering the LangGraph state machine.
 
 ---
 

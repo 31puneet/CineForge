@@ -133,13 +133,17 @@ export const respondToApproval = async (req: Request, res: Response): Promise<vo
 
     // Proxy to AI Service
     const aiServiceUrl = process.env.AI_SERVICE_URL || 'http://ai-service:8000';
+    const payload = { project_id: projectId as string, approved, reason: reason || '' };
+    console.log('Sending to AI service:', JSON.stringify(payload));
     const response = await fetch(`${aiServiceUrl}/api/workflow/respond`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ project_id: projectId as string, approved, reason: reason || '' })
+      body: JSON.stringify(payload)
     });
 
     if (!response.ok) {
+      const errorText = await response.text();
+      console.error('AI Service /respond failed:', errorText);
       throw new Error(`AI Service /respond failed: ${response.statusText}`);
     }
 

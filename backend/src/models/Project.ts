@@ -13,6 +13,7 @@ export interface IProject extends Document {
   title: string;
   status: ProjectStatus;
   settings: IProjectSettings;
+  workflowState?: any;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -42,6 +43,10 @@ const ProjectSchema = new Schema<IProject>({
   settings: {
     type: ProjectSettingsSchema,
     default: () => ({ aspectRatio: '16:9', targetDurationSeconds: 60 })
+  },
+  workflowState: {
+    type: Schema.Types.Mixed,
+    default: {}
   }
 }, {
   timestamps: true,

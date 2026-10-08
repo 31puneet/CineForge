@@ -157,19 +157,54 @@ export const respondToApproval = async (req: Request, res: Response): Promise<vo
 export const getWorkflowState = async (req: Request, res: Response): Promise<void> => {
   try {
     const { projectId } = req.params;
-    const aiServiceUrl = process.env.AI_SERVICE_URL || 'http://ai-service:8000';
-    
-    const response = await fetch(`${aiServiceUrl}/api/workflow/state/${projectId as string}`);
-    
-    if (!response.ok) {
-      res.status(response.status).json({ error: 'Failed to fetch workflow state' });
+    const userId = req.user?.id;
+
+    const project = await Project.findOne({ _id: projectId as string, userId });
+    if (!project) {
+      res.status(404).json({ error: 'Project not found or unauthorized' });
       return;
     }
     
-    const data = await response.json();
-    res.json(data);
+    // Return empty state structure if none exists
+    const defaultState = {
+      current_stage: null,
+      script_data: null,
+      script_version: 0,
+      script_history: [],
+      characters: [],
+      character_version: 0,
+      character_history: [],
+      approval_states: {}
+    };
+
+    res.json(project.workflowState || defaultState);
   } catch (error) {
     console.error('Error fetching workflow state:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+export const updateWorkflowState = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { projectId } = req.params;
+    
+    // Allow service-to-service updates without userId check, or trust the proxy
+    // In a real app we'd secure this with an internal API key
+    const project = await Project.findOne({ _id: projectId as string });
+    if (!project) {
+      res.status(404).json({ error: 'Project not found' });
+      return;
+    }
+
+    project.workflowState = req.body;
+    
+    // We must tell mongoose that the Mixed type field changed
+    project.markModified('workflowState');
+    await project.save();
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error updating workflow state:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 };

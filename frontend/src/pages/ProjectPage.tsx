@@ -6,15 +6,16 @@ import { WorkspaceSidebar } from '../components/workspace/WorkspaceSidebar';
 import { AgentChat } from '../components/workspace/AgentChat';
 import { ArtifactManager } from '../components/workspace/ArtifactManager';
 import { ScriptViewer } from '../components/workspace/ScriptViewer';
+import { CharacterViewer } from '../components/workspace/CharacterViewer';
 import strings from '../constants/strings.json';
-import { FileText, MessageSquare } from 'lucide-react';
+import { FileText, MessageSquare, Users } from 'lucide-react';
 
 export default function ProjectPage() {
   const { id } = useParams();
   const { project, isLoading, error } = useProject(id);
   const { workflowState, fetchState } = useWorkflowState(id);
   
-  const [activeTab, setActiveTab] = useState<'chat' | 'script'>('chat');
+  const [activeTab, setActiveTab] = useState<'chat' | 'script' | 'characters_tab'>('chat');
 
   if (isLoading) {
     return (
@@ -35,6 +36,7 @@ export default function ProjectPage() {
   }
 
   const hasScript = !!workflowState?.script_data;
+  const hasCharacters = !!workflowState?.character_version && workflowState.character_version > 0;
 
   return (
     <div className="h-screen w-full bg-[#FAF7F2] font-sans flex overflow-hidden">
@@ -73,6 +75,20 @@ export default function ProjectPage() {
               {strings.workspace.projectPage.tabs.script} {workflowState?.approval_states?.script_approved ? strings.workspace.projectPage.tabs.approved : strings.workspace.projectPage.tabs.review}
             </button>
           )}
+          
+          {hasCharacters && (
+            <button 
+              onClick={() => setActiveTab('characters_tab')}
+              className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${
+                activeTab === 'characters_tab' 
+                  ? 'bg-white text-stone-900 border border-b-0 border-stone-200' 
+                  : 'text-stone-500 hover:text-stone-700 hover:bg-stone-100'
+              }`}
+            >
+              <Users className="w-4 h-4" />
+              {strings.workspace.projectPage.tabs.characters} {workflowState?.approval_states?.characters_approved ? strings.workspace.projectPage.tabs.approved : strings.workspace.projectPage.tabs.review}
+            </button>
+          )}
         </div>
         
         {/* Tab Content */}
@@ -81,14 +97,24 @@ export default function ProjectPage() {
             <AgentChat project={project} onFetchState={fetchState} onSwitchTab={(tab) => setActiveTab(tab as any)} />
           </div>
           <div className={`absolute inset-0 ${activeTab === 'script' ? 'block' : 'hidden'}`}>
-            <ScriptViewer workflowState={workflowState} />
+            <ScriptViewer project={project} workflowState={workflowState} />
+          </div>
+          <div className={`absolute inset-0 ${activeTab === 'characters_tab' ? 'block' : 'hidden'}`}>
+            <CharacterViewer workflowState={workflowState} />
           </div>
         </div>
       </div>
 
       {/* ─── Right 25% (Artifacts Folder) ─── */}
       <div className="w-1/4 min-w-[280px] max-w-[320px] h-full flex-shrink-0">
-        <ArtifactManager project={project} onSelectScript={() => setActiveTab('script')} hasScript={hasScript} />
+        <ArtifactManager 
+          project={project}
+          workflowState={workflowState}
+          onSelectScript={() => setActiveTab('script')} 
+          hasScript={hasScript} 
+          onSelectCharacters={() => setActiveTab('characters_tab')}
+          hasCharacters={hasCharacters}
+        />
       </div>
 
     </div>

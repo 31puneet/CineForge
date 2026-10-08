@@ -6,6 +6,9 @@ export interface WorkflowState {
   script_data: any | null;
   script_version?: number;
   script_history?: any[];
+  characters?: any[];
+  character_version?: number;
+  character_history?: any[];
   approval_states: {
     script_approved?: boolean;
     characters_approved?: boolean;

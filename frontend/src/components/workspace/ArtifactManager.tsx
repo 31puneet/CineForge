@@ -1,15 +1,19 @@
 import { useRef } from 'react';
 import { Folder, Search, ChevronRight, Upload, Loader2 } from 'lucide-react';
 import { useAssetUpload } from '../../hooks/useAssetUpload';
+
 import strings from '../../constants/strings.json';
 
 interface ArtifactManagerProps {
   project: any;
+  workflowState: any;
   onSelectScript?: () => void;
+  onSelectCharacters?: () => void;
   hasScript?: boolean;
+  hasCharacters?: boolean;
 }
 
-export function ArtifactManager({ project, onSelectScript, hasScript }: ArtifactManagerProps) {
+export function ArtifactManager({ project, workflowState, onSelectScript, onSelectCharacters, hasScript, hasCharacters }: ArtifactManagerProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { isUploading, error, uploadAsset } = useAssetUpload();
 
@@ -76,14 +80,18 @@ export function ArtifactManager({ project, onSelectScript, hasScript }: Artifact
             {strings.workspace.artifactManager.folders.scripts}
           </button>
           <div className="pl-9 mt-1 flex flex-col gap-1">
-            {hasScript && (
-              <button 
-                onClick={onSelectScript}
-                className="text-left text-sm text-stone-600 hover:text-orange-600 hover:bg-[#F3ECE5] px-2 py-1 rounded transition-colors"
-              >
-                v1_script.json
-              </button>
-            )}
+            {hasScript && workflowState?.script_version && workflowState.script_version > 0 && [...Array(workflowState.script_version)].map((_, i) => {
+              const v = workflowState.script_version! - i;
+              return (
+                <button 
+                  key={v}
+                  onClick={onSelectScript}
+                  className="text-left text-sm text-stone-600 hover:text-orange-600 hover:bg-[#F3ECE5] px-2 py-1 rounded transition-colors"
+                >
+                  {strings.workspace.artifactNames.script.replace('{v}', v.toString())}
+                </button>
+              );
+            })}
           </div>
         </div>
 
@@ -94,6 +102,20 @@ export function ArtifactManager({ project, onSelectScript, hasScript }: Artifact
             <Folder className="w-4 h-4 text-orange-500" />
             {strings.workspace.artifactManager.folders.characters}
           </button>
+          <div className="pl-9 mt-1 flex flex-col gap-1">
+            {hasCharacters && workflowState?.character_version && workflowState.character_version > 0 && [...Array(workflowState.character_version)].map((_, i) => {
+              const v = workflowState.character_version! - i;
+              return (
+                <button 
+                  key={v}
+                  onClick={onSelectCharacters}
+                  className="text-left text-sm text-stone-600 hover:text-orange-600 hover:bg-[#F3ECE5] px-2 py-1 rounded transition-colors"
+                >
+                  {strings.workspace.artifactNames.characters.replace('{v}', v.toString())}
+                </button>
+              );
+            })}
+          </div>
         </div>
 
         {/* Audio Folder */}

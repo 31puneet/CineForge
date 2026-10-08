@@ -57,6 +57,8 @@ class FilmGraphState(TypedDict):
     script_history: List[Dict[str, Any]]
     
     characters: List[Character]
+    character_version: int
+    character_history: List[Dict[str, Any]]
     voiceovers: List[Voiceover]
     video_shots: List[VideoShot]
     

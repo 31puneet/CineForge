@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Any
 import json
+import re
 from langchain_google_genai import ChatGoogleGenerativeAI
 from core.config import settings
 
@@ -32,14 +33,20 @@ class GeminiAdapter(BaseLLMProvider):
         async for chunk in self.llm.astream(prompt):
             yield chunk.content
 
+    def _extract_json(self, text: str) -> dict:
+        match = re.search(r"```(?:json)?\s*(\{.*\}|\[.*\])\s*```", text, re.DOTALL)
+        if match:
+            return json.loads(match.group(1))
+        return json.loads(text.strip())
+
     def get_structured_output(self, prompt: str, schema: Any, **kwargs) -> Any:
-        prompt_with_schema = f"{prompt}\n\nPlease output valid JSON that conforms to this schema:\n{json.dumps(schema.model_json_schema())}"
+        prompt_with_schema = f"{prompt}\n\nPlease output ONLY valid JSON that conforms to this schema:\n{json.dumps(schema.model_json_schema())}"
         response = self.llm.invoke(prompt_with_schema)
-        content = response.content.replace("```json", "").replace("```", "").strip()
-        return schema(**json.loads(content))
+        content = self._extract_json(response.content)
+        return schema(**content)
         
     async def aget_structured_output(self, prompt: str, schema: Any, **kwargs) -> Any:
         prompt_with_schema = f"{prompt}\n\nPlease output ONLY valid JSON that conforms to this schema:\n{json.dumps(schema.model_json_schema())}"
         response = await self.llm.ainvoke(prompt_with_schema)
-        content = response.content.replace("```json", "").replace("```", "").strip()
-        return schema(**json.loads(content))
+        content = self._extract_json(response.content)
+        return schema(**content)

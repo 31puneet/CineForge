@@ -1,0 +1,26 @@
+# CodeRabbit Configuration File
+# https://coderabbit.ai/docs/configuration
+
+language: "en-US"
+reviews:
+  profile: "software_engineer"
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  review_status: true
+  collapse_walkthrough: false
+  instructions: |
+    CRITICAL: Before reviewing any code, you MUST read the `Agent.md` file located in the root of this repository. 
+    Strictly enforce all coding guidelines, architecture rules, and engineering principles defined in `Agent.md`.
+    
+    Additionally, focus on the following:
+    - Avoid nitpicking on minor stylistic choices unless they violate the core principles in `Agent.md`.
+    - Check for missing error handling, unhandled exceptions, or unawaited asynchronous functions.
+    - Validate that code follows the principle "Build the real thing" - flag any mocked or "fake" implementations if they are not explicitly approved as such.
+    - Check for adherence to SOLID principles, modularity, and separation of concerns.
+    - Verify that no sensitive secrets or API keys are hardcoded in the diff.
+    - Ensure new features have adequate test coverage where applicable.
+    
+    If the Pull Request violates any rules established in `Agent.md`, point them out explicitly in your review.
+chat:
+  auto_reply: true

@@ -177,7 +177,8 @@ export const getWorkflowState = async (req: Request, res: Response): Promise<voi
       approval_states: {}
     };
 
-    res.json(project.workflowState || defaultState);
+    const stored = project.workflowState;
+    res.json(stored && Object.keys(stored).length > 0 ? { ...defaultState, ...stored } : defaultState);
   } catch (error) {
     console.error('Error fetching workflow state:', error);
     res.status(500).json({ error: 'Internal server error' });

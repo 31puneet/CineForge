@@ -110,20 +110,34 @@ async def start_workflow(req: StartWorkflowRequest):
         # Convert messages
         serializable_state = dict(s)
         if "messages" in serializable_state:
-            serializable_state["messages"] = [
-                {"role": m.type, "content": m.content} if isinstance(m, BaseMessage) else m 
-                for m in serializable_state.get("messages", [])
-            ]
+            cleaned_messages = []
+            for m in serializable_state.get("messages", []):
+                if isinstance(m, BaseMessage):
+                    content = m.content
+                    if isinstance(content, list):
+                        content = [
+                            {"type": "text", "text": "[Image attached]"} if b.get("type") == "image_url" else b
+                            for b in content
+                        ]
+                    cleaned_messages.append({"role": m.type, "content": content})
+                else:
+                    cleaned_messages.append(m)
+            serializable_state["messages"] = cleaned_messages
             
         backend_url = os.getenv("BACKEND_URL", "http://cineforge-backend:3000")
-        internal_api_key = os.getenv("INTERNAL_API_KEY", "default-internal-secret-cineforge")
+        internal_api_key = os.environ.get("INTERNAL_API_KEY")
+        if not internal_api_key:
+            print("INTERNAL_API_KEY is not set. Skipping state persistence.")
+            return
+
         try:
-            async with httpx.AsyncClient() as client:
-                await client.put(
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.put(
                     f"{backend_url}/api/internal/projects/{req.project_id}/messages/state", 
                     json=serializable_state,
                     headers={"x-internal-api-key": internal_api_key}
                 )
+                resp.raise_for_status()
         except Exception as e:
             print(f"Failed to persist state to backend: {e}")
 

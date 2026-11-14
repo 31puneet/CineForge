@@ -41,6 +41,7 @@ export const sendMessage = async (req: Request, res: Response): Promise<void> =>
       attachments: attachments || [],
       timestamp: new Date()
     };
+    project.messages = project.messages || [];
     project.messages.push(userMessage);
     await project.save();
 
@@ -84,7 +85,7 @@ export const respondToApproval = async (req: Request, res: Response): Promise<vo
     }
 
     const aiServiceUrl = process.env.AI_SERVICE_URL || 'http://localhost:8000';
-    const response = await fetch(`${aiServiceUrl}/api/workflow/approve`, {
+    const response = await fetch(`${aiServiceUrl}/api/workflow/respond`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -95,7 +96,7 @@ export const respondToApproval = async (req: Request, res: Response): Promise<vo
     });
 
     if (!response.ok) {
-      throw new Error(`AI Service /approve failed: ${response.statusText}`);
+      throw new Error(`AI Service /respond failed: ${response.statusText}`);
     }
 
     const data = await response.json();

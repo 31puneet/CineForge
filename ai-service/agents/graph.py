@@ -1,4 +1,5 @@
 import os
+import asyncio
 from langgraph.graph import StateGraph, END
 from schemas.state import FilmGraphState
 from langchain_core.messages import AIMessage, SystemMessage, HumanMessage
@@ -17,6 +18,13 @@ import math
 from pydantic import ValidationError
 
 
+async def _safe_update_state(update_state_fn, state):
+    if update_state_fn:
+        if asyncio.iscoroutinefunction(update_state_fn):
+            await update_state_fn(state)
+        else:
+            update_state_fn(state)
+
 def validate_and_split_dialogue(shots: list[dict], max_wps: float = 2.5) -> list[dict]:
     """
     Ensures spoken dialogue fits within shot duration at max_wps (~2.5 words/sec).
@@ -33,13 +41,16 @@ def validate_and_split_dialogue(shots: list[dict], max_wps: float = 2.5) -> list
             shot["dialogue"] = " ".join(fitted_words)
             if i + 1 < len(shots) and overflow_words:
                 next_shot = shots[i + 1]
-                next_existing = (next_shot.get("dialogue") or "").strip()
-                if next_existing:
-                    next_shot["dialogue"] = f"{' '.join(overflow_words)} {next_existing}"
-                else:
-                    next_shot["dialogue"] = " ".join(overflow_words)
-                    if not next_shot.get("speaker"):
-                        next_shot["speaker"] = shot.get("speaker")
+                next_speaker = next_shot.get("speaker")
+                curr_speaker = shot.get("speaker")
+                if not next_speaker or next_speaker == curr_speaker:
+                    next_existing = (next_shot.get("dialogue") or "").strip()
+                    if next_existing:
+                        next_shot["dialogue"] = f"{' '.join(overflow_words)} {next_existing}"
+                    else:
+                        next_shot["dialogue"] = " ".join(overflow_words)
+                    if not next_speaker:
+                        next_shot["speaker"] = curr_speaker
     return shots
 
 async def script_agent_node(state: FilmGraphState, config: RunnableConfig):
@@ -162,7 +173,20 @@ CRITICAL REQUIREMENTS:
                 add_per = round(diff / len(shots), 1)
                 for s in shots[:-1]:
                     s["duration_seconds"] = max(1.0, min(PROVIDER_CLIP_SECONDS, s.get("duration_seconds", PROVIDER_CLIP_SECONDS) + add_per))
-                shots[-1]["duration_seconds"] = max(1.0, round(duration - sum(s["duration_seconds"] for s in shots[:-1]), 1))
+                last_dur = round(duration - sum(s["duration_seconds"] for s in shots[:-1]), 1)
+                if last_dur > PROVIDER_CLIP_SECONDS:
+                    excess = last_dur - PROVIDER_CLIP_SECONDS
+                    shots[-1]["duration_seconds"] = PROVIDER_CLIP_SECONDS
+                    for s in reversed(shots[:-1]):
+                        if excess <= 0:
+                            break
+                        headroom = PROVIDER_CLIP_SECONDS - s["duration_seconds"]
+                        if headroom > 0:
+                            allocated = min(headroom, excess)
+                            s["duration_seconds"] = round(s["duration_seconds"] + allocated, 1)
+                            excess -= allocated
+                else:
+                    shots[-1]["duration_seconds"] = max(1.0, last_dur)
             shots = validate_and_split_dialogue(shots, max_wps=getattr(settings, "MAX_WORDS_PER_SECOND", 2.5))
             script_data_dict["shots"] = shots
                 
@@ -181,8 +205,7 @@ CRITICAL REQUIREMENTS:
         
         # Save state manually since we will pause
         update_state_fn = config["configurable"].get("update_state")
-        if update_state_fn:
-            await update_state_fn(state)
+        await _safe_update_state(update_state_fn, state)
         
         if emitter:
             # Send message with link
@@ -207,6 +230,7 @@ CRITICAL REQUIREMENTS:
         else:
             # If no emitter (e.g. running outside API), just auto-approve for now
             approved = True
+            state["approval_states"]["script_approved"] = True
 
     return state
 
@@ -215,8 +239,7 @@ async def character_agent_node(state: FilmGraphState, config: RunnableConfig):
     update_state_fn = config["configurable"].get("update_state")
 
     state["current_stage"] = "character"
-    if update_state_fn:
-        await update_state_fn(state) if asyncio.iscoroutinefunction(update_state_fn) else update_state_fn(state)
+    await _safe_update_state(update_state_fn, state)
 
     version = state.get("character_version", 0)
     adapter = GeminiAdapter()
@@ -310,6 +333,7 @@ For each character, provide:
                 state["messages"].append(HumanMessage(content=f"I rejected the character list version {version} with this feedback: {reason}. Please revise it."))
         else:
             approved = True
+            state["approval_states"]["characters_approved"] = True
 
     return state
 
@@ -319,8 +343,7 @@ async def voiceover_agent_node(state: FilmGraphState, config: RunnableConfig):
     update_state_fn = config["configurable"].get("update_state")
 
     state["current_stage"] = "voiceover"
-    if update_state_fn:
-        update_state_fn(state)
+    await _safe_update_state(update_state_fn, state)
 
     script_data = state.get("script_data")
     if not script_data:
@@ -420,8 +443,7 @@ async def voiceover_agent_node(state: FilmGraphState, config: RunnableConfig):
             })
 
         state["voiceovers"] = voiceover_list
-        if update_state_fn:
-            update_state_fn(state)
+        await _safe_update_state(update_state_fn, state)
 
         if emitter:
             await emitter.push("status", content=f"Generated {len(voiceover_list)} voiceover lines. Ready for Director review.")
@@ -449,6 +471,7 @@ async def voiceover_agent_node(state: FilmGraphState, config: RunnableConfig):
                 state["messages"].append(HumanMessage(content=f"User requested voiceover revisions: {reason}"))
         else:
             approved = True
+            state["approval_states"]["characters_approved"] = True
             state["approval_states"]["voiceovers_approved"] = True
 
     return state
@@ -604,8 +627,18 @@ async def video_agent_node(state: FilmGraphState, config: RunnableConfig):
                     raise RuntimeError(err_msg) from e
 
         shutil.copyfile(ai_clip, raw_clip_out)
-        shutil.copyfile(ai_clip, final_clip_out)
-        real_duration = round(clip_info.duration, 3)
+        target_dur = float(shot.get("duration_seconds", PROVIDER_CLIP_SECONDS))
+        if clip_info.duration > target_dur + 0.1:
+            trim_cmd = [FFMPEG_BIN, "-y", "-i", ai_clip, "-t", str(target_dur), "-c", "copy", final_clip_out]
+            res = await asyncio.to_thread(lambda: subprocess.run(trim_cmd, capture_output=True))
+            if res.returncode != 0 or not os.path.exists(final_clip_out):
+                shutil.copyfile(ai_clip, final_clip_out)
+                real_duration = round(clip_info.duration, 3)
+            else:
+                real_duration = target_dur
+        else:
+            shutil.copyfile(ai_clip, final_clip_out)
+            real_duration = round(clip_info.duration, 3)
 
         # Generate thumbnail
         thumb_path = os.path.join(renders_dir, f"thumb_{shot_id}.jpg")
@@ -634,8 +667,7 @@ async def video_agent_node(state: FilmGraphState, config: RunnableConfig):
     state["video_shots"] = video_shot_records
     state["approval_states"]["video_approved"] = False
 
-    if update_state_fn:
-        update_state_fn(state)
+    await _safe_update_state(update_state_fn, state)
 
     if emitter:
         await emitter.push("status", content="All video shots processed. Ready for review and assembly.")

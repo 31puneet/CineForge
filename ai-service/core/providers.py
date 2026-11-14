@@ -98,7 +98,7 @@ class GeminiAdapter(BaseLLMProvider):
             except Exception as e:
                 last_error = e
                 print(f"[GeminiAdapter] astream failed with model '{model}': {e}")
-                if not self._should_fallback(e):
+                if yielded_any or not self._should_fallback(e):
                     raise e
                 print(f"[GeminiAdapter] Falling back from '{model}' to next candidate model...")
                 await asyncio.sleep(0.5)
@@ -218,14 +218,14 @@ class PollinationsImageAdapter(BaseImageProvider):
         seed = kwargs.get("seed", random.randint(1000, 999999))
         key = getattr(settings, "POLLINATIONS_API_KEY", "")
 
-        params = [f"seed={seed}", "nologo=true"]
+        safe_params = [f"seed={seed}", "nologo=true"]
         if self.width and self.height:
-            params.append(f"width={self.width}&height={self.height}")
-        if key:
-            params.append(f"token={key}")
-        query_str = "&".join(params)
+            safe_params.append(f"width={self.width}&height={self.height}")
+        safe_query_str = "&".join(safe_params)
+        safe_image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?{safe_query_str}"
 
-        image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?{query_str}"
+        req_query_str = safe_query_str + (f"&token={key}" if key else "")
+        req_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?{req_query_str}"
 
         headers = {}
         if key:
@@ -233,7 +233,7 @@ class PollinationsImageAdapter(BaseImageProvider):
 
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
-                resp = await client.get(image_url, headers=headers)
+                resp = await client.get(req_url, headers=headers)
                 if resp.status_code == 200 and resp.headers.get("content-type", "").startswith("image/"):
                     b64 = base64.b64encode(resp.content).decode("utf-8")
                     return f"data:image/jpeg;base64,{b64}"
@@ -242,7 +242,7 @@ class PollinationsImageAdapter(BaseImageProvider):
         except Exception as e:
             print(f"[PollinationsImageAdapter] Fetch error: {e}")
 
-        return image_url
+        return safe_image_url
 
 
 class HuggingFaceImageAdapter(BaseImageProvider):
@@ -294,7 +294,8 @@ class GoogleImagenAdapter(BaseImageProvider):
             image_models = ["gemini-2.5-flash-image", "gemini-3.1-flash-image"]
             for model_id in image_models:
                 try:
-                    response = client.models.generate_content(
+                    response = await asyncio.to_thread(
+                        client.models.generate_content,
                         model=model_id,
                         contents=f"Generate a high-quality cinematic {aspect_ratio} portrait: {clean_prompt}"
                     )
@@ -465,17 +466,56 @@ class EdgeTTSAudioAdapter(BaseAudioProvider):
         "female_default": {"voice": "en-US-JennyNeural", "pitch": "+0Hz", "rate": "+0%", "label": "Narrator (Female)", "gender": "female"}
     }
 
+    VOICESTUDIO_OR_CUSTOM_MAP = {
+        "appu": "en-US-AnaNeural",
+        "chintu": "en-US-EricNeural",
+        "doraemon": "en-US-AnaNeural",
+        "nobita": "en-US-AnaNeural",
+        "default": "en-US-ChristopherNeural",
+        "narrator": "en-US-ChristopherNeural",
+    }
+    ELEVEN_TO_EDGE_MAP = {
+        "pNInz6obpgDQGcFmaJgB": "en-US-ChristopherNeural",
+        "JBFqnCBsd6RMkjVDRZzb": "en-US-GuyNeural",
+        "SOYHLrjzK2X1ezoPC6cr": "en-US-ChristopherNeural",
+        "N2lVS1w4EtoT3dr4eOWO": "en-US-ChristopherNeural",
+        "nPczCjzI2devNBz1zQrb": "en-US-BrianNeural",
+        "TX3LPaxmHKxFdv7VOQHJ": "en-US-EricNeural",
+        "CwhRBWXzGAHq8TQ4Fs17": "en-US-AndrewNeural",
+        "cjVigY5qzO86Huf0OWal": "en-US-AndrewNeural",
+        "EXAVITQu4vr4xnSDxMaL": "en-US-JennyNeural",
+        "pFZP5JQG7iQjIQuC4Bku": "en-US-AvaNeural",
+        "cgSgspJ2msm6clMCkdW9": "en-US-AnaNeural",
+        "Xb7hH8MSUJpSbSDYk0k2": "en-US-EmmaNeural",
+        "FGY2WhTYpPnrIDTdsKH5": "en-US-AriaNeural",
+        "XrExE9yKIg1WjnnlVkGX": "en-US-EmmaNeural",
+    }
+
     async def generate_speech(self, text: str, voice_id: str = "en-US-ChristopherNeural", pitch: str = "+0Hz", rate: str = "+0%") -> str:
         import edge_tts
         import base64
         clean_text = text.strip()
+
+        resolved_voice = voice_id
+        if resolved_voice in self.VOICE_PRESETS:
+            preset = self.VOICE_PRESETS[resolved_voice]
+            resolved_voice = preset["voice"]
+            pitch = preset.get("pitch", pitch)
+            rate = preset.get("rate", rate)
+        elif resolved_voice in self.ELEVEN_TO_EDGE_MAP:
+            resolved_voice = self.ELEVEN_TO_EDGE_MAP[resolved_voice]
+        elif resolved_voice.lower() in self.VOICESTUDIO_OR_CUSTOM_MAP:
+            resolved_voice = self.VOICESTUDIO_OR_CUSTOM_MAP[resolved_voice.lower()]
+        elif "Neural" not in resolved_voice:
+            resolved_voice = "en-US-ChristopherNeural"
+
         if pitch == "+0Hz" and rate == "+0%":
             for preset in self.VOICE_PRESETS.values():
-                if preset["voice"] == voice_id and (preset.get("pitch") != "+0Hz" or preset.get("rate") != "+0%"):
+                if preset["voice"] == resolved_voice and (preset.get("pitch") != "+0Hz" or preset.get("rate") != "+0%"):
                     pitch = preset["pitch"]
                     rate = preset["rate"]
                     break
-        comm = edge_tts.Communicate(clean_text, voice_id, pitch=pitch, rate=rate)
+        comm = edge_tts.Communicate(clean_text, resolved_voice, pitch=pitch, rate=rate)
         chunks = []
         async for chunk in comm.stream():
             if chunk["type"] == "audio":
@@ -810,8 +850,16 @@ class VoiceStudioAudioAdapter(BaseAudioProvider):
 def get_audio_provider() -> BaseAudioProvider:
     """Factory to return active audio generation provider (VoiceStudio, ElevenLabs, or EdgeTTS)."""
     provider_pref = (getattr(settings, "AUDIO_PROVIDER", "") or "auto").lower().strip()
-    if provider_pref == "voicestudio" or getattr(settings, "ENABLE_VOICESTUDIO", False):
+    if provider_pref == "edgetts":
+        return EdgeTTSAudioAdapter()
+    if provider_pref == "elevenlabs" and getattr(settings, "ELEVENLABS_API_KEY", ""):
+        return ElevenLabsAudioAdapter()
+    if provider_pref == "voicestudio":
         return VoiceStudioAudioAdapter()
-    if provider_pref in ["elevenlabs", "auto"] and getattr(settings, "ELEVENLABS_API_KEY", ""):
+
+    # auto mode: prioritize explicit keys or configured availability
+    if getattr(settings, "ENABLE_VOICESTUDIO", False):
+        return VoiceStudioAudioAdapter()
+    if getattr(settings, "ELEVENLABS_API_KEY", ""):
         return ElevenLabsAudioAdapter()
     return EdgeTTSAudioAdapter()

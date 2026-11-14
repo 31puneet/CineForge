@@ -314,6 +314,7 @@ async def start_workflow(req: StartWorkflowRequest):
     return StreamingResponse(event_stream(), media_type="application/x-ndjson")
 
 @router.post("/respond")
+@router.post("/approve")
 async def respond_approval(req: RespondApprovalRequest):
     respond_to_approval(req.project_id, req.approved, req.reason)
     cached = load_persisted_state(req.project_id)

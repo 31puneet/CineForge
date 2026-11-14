@@ -345,6 +345,14 @@ async def assemble_video(state: FilmGraphState, config: RunnableConfig) -> FilmG
         if "approval_states" in state:
             state["approval_states"]["editor_approved"] = True
 
+        update_state_fn = config.get("configurable", {}).get("update_state")
+        if update_state_fn:
+            import asyncio
+            if asyncio.iscoroutinefunction(update_state_fn):
+                await update_state_fn(state)
+            else:
+                update_state_fn(state)
+
         if emitter:
             await emitter.push("status", content="Master film passed all QC checks and is ready for playback!")
             await emitter.push(

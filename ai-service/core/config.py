@@ -2,7 +2,16 @@ import os
 try:
     from pydantic_settings import BaseSettings
 except ImportError:
-    from pydantic import BaseModel as BaseSettings
+    from pydantic import BaseModel
+    class BaseSettings(BaseModel):
+        def __init__(self, **values):
+            init_vals = {}
+            fields = getattr(self, "model_fields", None) or getattr(self, "__fields__", {})
+            for field_name in fields:
+                if field_name in os.environ:
+                    init_vals[field_name] = os.environ[field_name]
+            init_vals.update(values)
+            super().__init__(**init_vals)
 
 class Settings(BaseSettings):
     GEMINI_API_KEY: str = ""

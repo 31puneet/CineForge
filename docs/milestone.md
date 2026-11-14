@@ -89,13 +89,14 @@ This document is the definitive engineering roadmap for CineForge. It translates
 * [x] **Approval API**: Implement `/api/projects/:id/script/approve` and `/api/projects/:id/script/reject` in Node.js. 
 * [x] **Regeneration Logic**: If rejected, send feedback back to FastAPI. Graph routes back to `generate_script`, creating Version 2 while preserving Version 1 in Mongo.
 
-### [ ] Milestone 9: Stage 2 - Character Generation & Review
+### [x] Milestone 9: Stage 2 - Character Generation & Review
 **What it does:** Extracts speakers from the script and generates consistent visual reference images for them.
-* [ ] **Character Extraction**: FastAPI analyzes `script_data` and identifies unique speakers.
-* [ ] **Image Generation Adapter**: Implement `BaseImageProvider` and a concrete adapter for an image generation API.
-* [ ] **Character Node**: Implement `generate_characters` LangGraph node. Loops through characters, generates prompts, calls Image API, uploads images to MinIO, and updates `FilmGraphState.characters`.
-* [ ] **Character UI**: Build a grid of "Character Cards" in the React Right Panel. Show the reference image, name, and description.
-* [ ] **Targeted Regeneration**: Implement per-character rejection. If Character A is bad, Node.js API `/api/projects/:id/characters/:charId/regenerate` triggers FastAPI to *only* regenerate Character A.
+* [x] **Character Extraction**: FastAPI analyzes `script_data` and identifies unique speakers.
+* [x] **Image Generation Adapter**: Implement `BaseImageProvider` and a concrete adapter for an image generation API.
+* [x] **Character Node**: Implement `generate_characters` LangGraph node. Loops through characters, generates prompts, calls Image API, uploads images to MinIO, and updates `FilmGraphState.characters`.
+* [x] **Character UI**: Build a grid of "Character Cards" in the React Right Panel. Show the reference image, name, and description.
+* [x] **Targeted Regeneration**: Implement per-character rejection. If Character A is bad, Node.js API `/api/projects/:id/characters/:charId/regenerate` triggers FastAPI to *only* regenerate Character A.
+
 
 ### [ ] Milestone 10: Stage 3 - Voiceover Generation & Review
 **What it does:** Generates TTS audio for all dialogue lines, mapping characters to specific voices.

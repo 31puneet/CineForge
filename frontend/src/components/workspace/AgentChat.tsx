@@ -1,13 +1,16 @@
 import { useState, useEffect, useRef } from 'react';
-import { Send, FileText, Loader2, ChevronDown, ChevronRight, CheckCircle2, Circle, Paperclip, X, Image as ImageIcon } from 'lucide-react';
+import { Send, FileText, Loader2, ChevronDown, ChevronRight, CheckCircle2, Circle, Users, Volume2, Film, Paperclip, X, Image as ImageIcon } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
+
 import strings from '../../constants/strings.json';
 import apiClient from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
 import type { WorkflowEvent } from '../../types/events';
+import type { WorkflowState } from '../../hooks/useWorkflowState';
 
 interface AgentChatProps {
   project: any;
+  workflowState?: WorkflowState | null;
   onFetchState?: () => Promise<void>;
   onSwitchTab?: (tab: string) => void;
 }
@@ -20,7 +23,7 @@ interface Message {
   metadata?: any;
 }
 
-export function AgentChat({ project, onFetchState, onSwitchTab }: AgentChatProps) {
+export function AgentChat({ project, workflowState, onFetchState, onSwitchTab }: AgentChatProps) {
   const { user } = useAuth();
   const projectId = project?.id || project?._id;
   const [input, setInput] = useState('');
@@ -43,6 +46,19 @@ export function AgentChat({ project, onFetchState, onSwitchTab }: AgentChatProps
   const [attachments, setAttachments] = useState<{type: string, url: string, name: string}[]>([]);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
+  
+  // Check if approval is needed either from live stream OR persisted workflowState
+  const effectiveApprovalStage = approvalStage || (() => {
+    if (!workflowState) return '';
+    const approvals = workflowState.approval_states || {};
+    if (!approvals.script_approved && workflowState.script_data) return 'script';
+    if (!approvals.characters_approved && (workflowState.characters?.length ?? 0) > 0) return 'character';
+    if (!approvals.voiceovers_approved && (workflowState.voiceovers?.length ?? 0) > 0) return 'voiceover';
+    if (!approvals.video_approved && (workflowState.video_shots?.length ?? 0) > 0) return 'video';
+    return '';
+  })();
+
+  const isApprovalNeeded = (approvalPending || !!effectiveApprovalStage) && !isLoading;
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -77,22 +93,28 @@ export function AgentChat({ project, onFetchState, onSwitchTab }: AgentChatProps
     
     setApprovalPending(false);
     setShowReasonInput(false);
-    setIsLoading(true);
-    setThinkingSteps([]);
-    setThinkingContent('');
-    setThinkingExpanded(true); // Re-open thinking for next step
+    const stageToRespond = effectiveApprovalStage || approvalStage;
+    const reasonToSend = rejectionReason;
+    setRejectionReason('');
     
     try {
       await apiClient.post(`/projects/${projectId}/messages/respond`, {
         approved,
-        reason: rejectionReason,
-        stage: approvalStage,
-        version: 1 // backend determines real version if needed, or we just pass it
+        reason: reasonToSend,
+        stage: stageToRespond,
+        version: 1
       });
-      setRejectionReason('');
+      if (onFetchState) await onFetchState();
+
+      if (approved) {
+        await executeSendMessage('continue');
+      } else {
+        await executeSendMessage(reasonToSend ? `Revise: ${reasonToSend}` : 'Please revise');
+      }
     } catch (error) {
       console.error('Failed to submit approval:', error);
       setIsError(true);
+      setIsLoading(false);
     }
   };
 
@@ -116,9 +138,14 @@ export function AgentChat({ project, onFetchState, onSwitchTab }: AgentChatProps
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim() || isLoading || !projectId) return;
-
-    const userMessageContent = input.trim();
+    const text = input.trim();
     setInput('');
+    await executeSendMessage(text);
+  };
+
+  const executeSendMessage = async (userMessageContent: string) => {
+    if (!userMessageContent.trim() || !projectId) return;
+
     setIsLoading(true);
     setIsError(false);
     setThinkingSteps([]);
@@ -160,7 +187,21 @@ export function AgentChat({ project, onFetchState, onSwitchTab }: AgentChatProps
         })
       });
 
-      if (!res.ok || !res.body) throw new Error('Failed to send message');
+      if (!res.ok || !res.body) {
+        let errText = 'Failed to send message';
+        try {
+          const errJson = await res.json();
+          errText = errJson.error?.message || errJson.error || (typeof errJson === 'string' ? errJson : errText);
+        } catch {
+          // ignore parsing error
+        }
+        if (res.status === 401) {
+          errText = 'Session expired. Please refresh the page and log in again.';
+        } else if (res.status === 404) {
+          errText = 'Project not found or unauthorized.';
+        }
+        throw new Error(errText);
+      }
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
@@ -204,8 +245,17 @@ export function AgentChat({ project, onFetchState, onSwitchTab }: AgentChatProps
               setIsLoading(false); // Enable chat interaction again for approval
             } else if (parsed.type === 'error') {
               setIsError(true);
-              setErrorMessage(parsed.content);
+              const errMsg = parsed.content || (parsed as any).message || 'An error occurred';
+              setErrorMessage(errMsg);
+              const errorChatMsg: Message = {
+                _id: Date.now().toString() + Math.random(),
+                role: 'assistant',
+                content: `⚠️ **Notice:** ${errMsg}`,
+                createdAt: new Date().toISOString()
+              };
+              setMessages(prev => [...prev, errorChatMsg]);
               setIsLoading(false);
+              if (onFetchState) onFetchState();
             } else if (parsed.type === 'done') {
               setIsLoading(false);
               setThinkingExpanded(false);
@@ -216,9 +266,10 @@ export function AgentChat({ project, onFetchState, onSwitchTab }: AgentChatProps
           }
         }
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to send message:', error);
       setIsError(true);
+      setErrorMessage(error?.message || 'An error occurred while communicating with the agent.');
       setIsLoading(false);
     }
   };
@@ -301,7 +352,9 @@ export function AgentChat({ project, onFetchState, onSwitchTab }: AgentChatProps
                   </button>
                 )}
               </div>
+
             </div>
+
 
             {msg.role === 'user' && (
               <div className="w-8 h-8 rounded-full bg-stone-200 flex items-center justify-center shrink-0 overflow-hidden mt-1">
@@ -389,28 +442,40 @@ export function AgentChat({ project, onFetchState, onSwitchTab }: AgentChatProps
               <span className="text-red-500 text-xs">!</span>
             </div>
             <div className="bg-red-50 border border-red-200 rounded-2xl rounded-tl-none p-4 max-w-[80%] text-red-700 text-sm">
-              {errorMessage || 'An error occurred while communicating with the agent. Please try again.'}
+              {(() => {
+                const msg = errorMessage || '';
+                if (!msg) return 'An error occurred while communicating with the agent. Please try again.';
+                if (msg.includes('503') || msg.toLowerCase().includes('high demand') || msg.toLowerCase().includes('unavailable')) {
+                  return 'The AI service is temporarily experiencing high demand from Google. Please try again in a few moments.';
+                }
+                if (msg.includes('429') || msg.toLowerCase().includes('quota') || msg.toLowerCase().includes('resource_exhausted')) {
+                  return 'Rate limit reached. Please wait a few moments and try again.';
+                }
+                return msg;
+              })()}
             </div>
           </div>
         )}
 
         {/* Approval Card */}
-        {approvalPending && (
+        {isApprovalNeeded && (
           <div className="flex gap-4">
             <div className="w-8 h-8 opacity-0"></div>
             <div className="bg-white border border-orange-200 rounded-2xl p-4 shadow-sm min-w-[300px]">
-              <div className="text-sm font-medium text-stone-800 mb-3">Does this {approvalStage} look good to you?</div>
+              <div className="text-sm font-medium text-stone-800 mb-3">
+                Does this {effectiveApprovalStage === 'character' ? 'character cast' : effectiveApprovalStage === 'voiceover' ? 'voiceover line-up' : effectiveApprovalStage === 'video' ? 'video shot line-up' : effectiveApprovalStage || 'step'} look good to you?
+              </div>
               
               <div className="flex gap-3">
                 <button 
                   onClick={() => handleRespondApproval(true)}
-                  className="flex-1 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg text-sm font-medium transition-colors"
+                  className="flex-1 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg text-sm font-medium transition-colors cursor-pointer"
                 >
                   Yes, proceed
                 </button>
                 <button 
                   onClick={() => handleRespondApproval(false)}
-                  className="flex-1 py-2 bg-stone-100 hover:bg-stone-200 text-stone-700 border border-stone-200 rounded-lg text-sm font-medium transition-colors"
+                  className="flex-1 py-2 bg-stone-100 hover:bg-stone-200 text-stone-700 border border-stone-200 rounded-lg text-sm font-medium transition-colors cursor-pointer"
                 >
                   No, revise
                 </button>
@@ -427,7 +492,7 @@ export function AgentChat({ project, onFetchState, onSwitchTab }: AgentChatProps
                   <button 
                     onClick={() => handleRespondApproval(false)}
                     disabled={!rejectionReason.trim()}
-                    className="py-2 bg-orange-500 hover:bg-orange-600 disabled:bg-stone-300 text-white rounded-lg text-sm font-medium transition-colors"
+                    className="py-2 bg-orange-500 hover:bg-orange-600 disabled:bg-stone-300 text-white rounded-lg text-sm font-medium transition-colors cursor-pointer"
                   >
                     Submit Feedback
                   </button>
@@ -476,15 +541,15 @@ export function AgentChat({ project, onFetchState, onSwitchTab }: AgentChatProps
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            disabled={isLoading || approvalPending}
-            placeholder={isLoading ? "Agent is working..." : approvalPending ? "Please approve or reject above..." : strings.workspace.agentChat.inputPlaceholder}
-            className="w-full pl-12 pr-32 py-4 bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 transition-all shadow-inner disabled:opacity-50"
+            disabled={isLoading}
+            placeholder={isLoading ? "Agent is working..." : (typeof isApprovalNeeded !== 'undefined' && isApprovalNeeded) || (typeof approvalPending !== 'undefined' && approvalPending) ? "Please approve or reject above..." : strings.workspace.agentChat.inputPlaceholder}
+            className="w-full pl-12 pr-32 py-4 bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 transition-all shadow-inner disabled:opacity-50" 
           />
           <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-2">
             <select
               value={selectedDuration}
               onChange={(e) => setSelectedDuration(e.target.value)}
-              disabled={isLoading || approvalPending}
+              disabled={isLoading}
               className="bg-transparent text-stone-500 text-xs font-medium cursor-pointer focus:outline-none hover:text-stone-800 transition-colors"
               title="Target Duration"
             >

@@ -219,7 +219,6 @@ async def start_workflow(req: StartWorkflowRequest):
                 "video_approved": False
             }
         }
-        }
     
     config = {"configurable": {"thread_id": req.project_id}}
     

@@ -6,10 +6,18 @@ build/
 
 # Python
 venv/
+.venv/
 __pycache__/
 *.py[cod]
 *$py.class
 .env
+.state_cache/
+.pytest_cache/
+
+# Renders & Media
+frontend/public/renders/
+*.mp4
+*.wav
 
 # IDEs and OS
 .DS_Store

@@ -1,8 +1,10 @@
+import React from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import strings from '../constants/strings.json';
 
-export function ProtectedRoute({ children }: { children: JSX.Element }) {
+export function ProtectedRoute({ children }: { children: React.ReactElement }) {
+
   const { user, isLoading } = useAuth();
   const location = useLocation();
 

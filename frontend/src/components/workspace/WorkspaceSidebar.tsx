@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, MessageSquare, ListTodo, Users, Settings } from 'lucide-react';
+import { ArrowLeft, MessageSquare, ListTodo, Settings } from 'lucide-react';
 import strings from '../../constants/strings.json';
+
 
 interface WorkspaceSidebarProps {
   project: any;

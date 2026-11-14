@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getMessages, sendMessage, getWorkflowState, respondToApproval } from './message.controller';
+import { getMessages, sendMessage, getWorkflowState, respondToApproval, regenerateShot } from './message.controller';
 import { requireAuth } from '../middleware/requireAuth';
 
 const router = Router({ mergeParams: true });
@@ -10,6 +10,7 @@ router.use(requireAuth);
 router.get('/', getMessages);
 router.post('/', sendMessage);
 router.post('/respond', respondToApproval);
+router.post('/regenerate-shot', regenerateShot);
 router.get('/state', getWorkflowState);
 
 export default router;

@@ -35,3 +35,8 @@ def respond_to_approval(project_id: str, approved: bool, reason: str = ""):
     _approval_responses[project_id] = {"approved": approved, "reason": reason}
     if project_id in _approval_events:
         _approval_events[project_id].set()
+
+async def wait_for_approval(project_id: str, stage: str = "") -> dict:
+    emitter = WorkflowEventEmitter(project_id)
+    return await emitter.wait_for_approval()
+

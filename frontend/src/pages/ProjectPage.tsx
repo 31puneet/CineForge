@@ -6,15 +6,18 @@ import { WorkspaceSidebar } from '../components/workspace/WorkspaceSidebar';
 import { AgentChat } from '../components/workspace/AgentChat';
 import { ArtifactManager } from '../components/workspace/ArtifactManager';
 import { ScriptViewer } from '../components/workspace/ScriptViewer';
+import { CharacterViewer } from '../components/workspace/CharacterViewer';
+import { AudioViewer } from '../components/workspace/AudioViewer';
+import { VideoViewer } from '../components/workspace/VideoViewer';
 import strings from '../constants/strings.json';
-import { FileText, MessageSquare } from 'lucide-react';
+import { FileText, MessageSquare, Users, Volume2, Film } from 'lucide-react';
 
 export default function ProjectPage() {
   const { id } = useParams();
   const { project, isLoading, error } = useProject(id);
   const { workflowState, fetchState } = useWorkflowState(id);
   
-  const [activeTab, setActiveTab] = useState<'chat' | 'script'>('chat');
+  const [activeTab, setActiveTab] = useState<'chat' | 'script' | 'characters' | 'audio' | 'video'>('chat');
 
   if (isLoading) {
     return (
@@ -35,6 +38,9 @@ export default function ProjectPage() {
   }
 
   const hasScript = !!workflowState?.script_data;
+  const hasCharacters = !!(workflowState?.characters && workflowState.characters.length > 0) || workflowState?.current_stage === 'character';
+  const hasAudio = !!(workflowState?.voiceovers && workflowState.voiceovers.length > 0) || workflowState?.current_stage === 'voiceover';
+  const hasVideo = !!(workflowState?.video_shots && workflowState.video_shots.length > 0) || workflowState?.current_stage === 'video';
 
   return (
     <div className="h-screen w-full bg-[#FAF7F2] font-sans flex overflow-hidden">
@@ -50,7 +56,7 @@ export default function ProjectPage() {
         <div className="flex border-b border-stone-200 bg-[#FAF7F2] px-4 pt-3 gap-2">
           <button 
             onClick={() => setActiveTab('chat')}
-            className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${
+            className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-t-lg transition-colors cursor-pointer ${
               activeTab === 'chat' 
                 ? 'bg-white text-stone-900 border border-b-0 border-stone-200' 
                 : 'text-stone-500 hover:text-stone-700 hover:bg-stone-100'
@@ -63,7 +69,7 @@ export default function ProjectPage() {
           {hasScript && (
             <button 
               onClick={() => setActiveTab('script')}
-              className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${
+              className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-t-lg transition-colors cursor-pointer ${
                 activeTab === 'script' 
                   ? 'bg-white text-stone-900 border border-b-0 border-stone-200' 
                   : 'text-stone-500 hover:text-stone-700 hover:bg-stone-100'
@@ -73,22 +79,86 @@ export default function ProjectPage() {
               {strings.workspace.projectPage.tabs.script} {workflowState?.approval_states?.script_approved ? strings.workspace.projectPage.tabs.approved : strings.workspace.projectPage.tabs.review}
             </button>
           )}
+
+          {hasCharacters && (
+            <button 
+              onClick={() => setActiveTab('characters')}
+              className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-t-lg transition-colors cursor-pointer ${
+                activeTab === 'characters' 
+                  ? 'bg-white text-stone-900 border border-b-0 border-stone-200' 
+                  : 'text-stone-500 hover:text-stone-700 hover:bg-stone-100'
+              }`}
+            >
+              <Users className="w-4 h-4" />
+              Characters {workflowState?.approval_states?.characters_approved ? strings.workspace.projectPage.tabs.approved : strings.workspace.projectPage.tabs.review}
+            </button>
+          )}
+
+          {hasAudio && (
+            <button 
+              onClick={() => setActiveTab('audio')}
+              className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-t-lg transition-colors cursor-pointer ${
+                activeTab === 'audio' 
+                  ? 'bg-white text-stone-900 border border-b-0 border-stone-200' 
+                  : 'text-stone-500 hover:text-stone-700 hover:bg-stone-100'
+              }`}
+            >
+              <Volume2 className="w-4 h-4" />
+              Audio {workflowState?.approval_states?.voiceovers_approved ? strings.workspace.projectPage.tabs.approved : strings.workspace.projectPage.tabs.review}
+            </button>
+          )}
+
+          {hasVideo && (
+            <button 
+              onClick={() => setActiveTab('video')}
+              className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-t-lg transition-colors cursor-pointer ${
+                activeTab === 'video' 
+                  ? 'bg-white text-stone-900 border border-b-0 border-stone-200 font-semibold' 
+                  : 'text-stone-500 hover:text-stone-700 hover:bg-stone-100'
+              }`}
+            >
+              <Film className="w-4 h-4 text-orange-600" />
+              Video {workflowState?.approval_states?.video_approved ? strings.workspace.projectPage.tabs.approved : strings.workspace.projectPage.tabs.review}
+            </button>
+          )}
         </div>
         
         {/* Tab Content */}
         <div className="flex-1 overflow-hidden relative">
           <div className={`absolute inset-0 ${activeTab === 'chat' ? 'block' : 'hidden'}`}>
-            <AgentChat project={project} onFetchState={fetchState} onSwitchTab={(tab) => setActiveTab(tab as any)} />
+            <AgentChat project={project} workflowState={workflowState} onFetchState={fetchState} onSwitchTab={(tab) => setActiveTab(tab as any)} />
           </div>
           <div className={`absolute inset-0 ${activeTab === 'script' ? 'block' : 'hidden'}`}>
-            <ScriptViewer workflowState={workflowState} />
+            <ScriptViewer project={project} workflowState={workflowState} />
+          </div>
+          <div className={`absolute inset-0 ${activeTab === 'characters' ? 'block' : 'hidden'}`}>
+            <CharacterViewer workflowState={workflowState} projectId={id} onRefreshState={fetchState} />
+          </div>
+          <div className={`absolute inset-0 ${activeTab === 'audio' ? 'block' : 'hidden'}`}>
+            <AudioViewer workflowState={workflowState} projectId={id} onRefreshState={fetchState} />
+          </div>
+          <div className={`absolute inset-0 ${activeTab === 'video' ? 'block' : 'hidden'}`}>
+            <VideoViewer workflowState={workflowState} projectId={id} onRefreshState={fetchState} />
           </div>
         </div>
       </div>
 
       {/* ─── Right 25% (Artifacts Folder) ─── */}
       <div className="w-1/4 min-w-[280px] max-w-[320px] h-full flex-shrink-0">
-        <ArtifactManager project={project} onSelectScript={() => setActiveTab('script')} hasScript={hasScript} />
+        <ArtifactManager 
+          project={project} 
+          onSelectScript={() => setActiveTab('script')} 
+          hasScript={hasScript}
+          onSelectCharacters={() => setActiveTab('characters')}
+          hasCharacters={hasCharacters}
+          characterCount={workflowState?.characters?.length || 0}
+          onSelectAudio={() => setActiveTab('audio')}
+          hasAudio={hasAudio}
+          audioCount={workflowState?.voiceovers?.length || 0}
+          onSelectVideo={() => setActiveTab('video')}
+          hasVideo={hasVideo}
+          videoCount={workflowState?.video_shots?.length || 0}
+        />
       </div>
 
     </div>

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Send, FileText, Loader2, ChevronDown, ChevronRight, CheckCircle2, Circle, Users, Volume2, Film, Paperclip, X, Image as ImageIcon } from 'lucide-react';
+import { Send, FileText, Loader2, ChevronDown, ChevronRight, CheckCircle2, Circle, Paperclip, X, Image as ImageIcon } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 
 import strings from '../../constants/strings.json';

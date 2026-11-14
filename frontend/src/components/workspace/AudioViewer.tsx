@@ -19,8 +19,8 @@ export function AudioViewer({ workflowState, projectId, onRefreshState }: AudioV
   const audioRefs = useRef<{ [key: string]: HTMLAudioElement | null }>({});
 
   const charactersMap = (workflowState?.characters || []).reduce((acc, c) => {
-    acc[c.name.toLowerCase()] = c;
-    acc[c.id.toLowerCase()] = c;
+    if (c.name) acc[c.name.toLowerCase()] = c;
+    if (c.id) acc[c.id.toLowerCase()] = c;
     return acc;
   }, {} as Record<string, any>);
 

@@ -332,11 +332,21 @@
       "tabs": {
         "chat": "Chat",
         "script": "Script",
+        "characters": "Characters",
         "approved": "(Approved)",
         "review": "(Review)"
       }
     },
+    "versioning": {
+      "version": "Version",
+      "latest": "(Latest)"
+    },
+    "artifactNames": {
+      "script": "v{v}_script.json",
+      "characters": "v{v}_characters.json"
+    },
     "scriptViewer": {
+      "historyTitle": "Script History",
       "noScript": "No script generated yet.",
       "title": "Shooting Script",
       "scene": "SCENE",
@@ -344,6 +354,14 @@
       "requestRevisions": "Request Revisions",
       "approveContinue": "Approve & Continue",
       "scriptApproved": "Script Approved. Proceeding to Character Generation."
+    },
+    "characterViewer": {
+      "historyTitle": "Character History",
+      "noCharacters": "No characters generated yet.",
+      "noPhysicalCharacters": "There are no physical characters in this script (e.g. voiceover only).",
+      "title": "Character List",
+      "approved": "Approved",
+      "visualDescription": "Visual Description"
     }
   }
 }

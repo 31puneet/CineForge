@@ -17,7 +17,7 @@ export default function ProjectPage() {
   const { project, isLoading, error } = useProject(id);
   const { workflowState, fetchState } = useWorkflowState(id);
   
-  const [activeTab, setActiveTab] = useState<'chat' | 'script' | 'characters' | 'audio' | 'video'>('chat');
+  const [activeTab, setActiveTab] = useState<'chat' | 'script' | 'characters' | 'characters_tab' | 'audio' | 'video'>('chat');
 
   if (isLoading) {
     return (
@@ -30,35 +30,30 @@ export default function ProjectPage() {
   if (error || !project) {
     return (
       <div className="min-h-screen bg-[#FAF7F2] font-sans flex items-center justify-center">
-        <div className="text-red-500 bg-red-50 px-6 py-4 rounded-xl border border-red-200 shadow-sm">
-          {error || strings.workspace.projectPage.notFound}
-        </div>
+        <div className="text-red-500">{error || strings.workspace.projectPage.notFound}</div>
       </div>
     );
   }
 
   const hasScript = !!workflowState?.script_data;
-  const hasCharacters = !!(workflowState?.characters && workflowState.characters.length > 0) || workflowState?.current_stage === 'character';
-  const hasAudio = !!(workflowState?.voiceovers && workflowState.voiceovers.length > 0) || workflowState?.current_stage === 'voiceover';
-  const hasVideo = !!(workflowState?.video_shots && workflowState.video_shots.length > 0) || workflowState?.current_stage === 'video';
+  const hasCharacters = (workflowState?.characters && workflowState.characters.length > 0) || (workflowState?.character_history && workflowState.character_history.length > 0);
+  const hasAudio = !!(workflowState?.voiceovers && workflowState.voiceovers.length > 0);
+  const hasVideo = !!(workflowState?.video_shots && workflowState.video_shots.length > 0) || !!workflowState?.final_video_url;
 
   return (
-    <div className="h-screen w-full bg-[#FAF7F2] font-sans flex overflow-hidden">
-      
-      {/* ─── Left 25% (Sidebar) ─── */}
-      <div className="w-1/4 min-w-[280px] max-w-[320px] h-full flex-shrink-0">
-        <WorkspaceSidebar project={project} />
-      </div>
+    <div className="h-screen w-screen overflow-hidden bg-[#FAF7F2] flex">
+      {/* ─── Left 15% (Navigation) ─── */}
+      <WorkspaceSidebar project={project} />
 
-      {/* ─── Center 50% (Agent Chat / Tabs) ─── */}
-      <div className="flex-1 h-full min-w-[500px] flex flex-col bg-white">
-        {/* Tab Bar */}
-        <div className="flex border-b border-stone-200 bg-[#FAF7F2] px-4 pt-3 gap-2">
+      {/* ─── Center 60% (Interactive Work Area) ─── */}
+      <div className="flex-1 flex flex-col h-full border-r border-[#D9D3C7] bg-white">
+        {/* Navigation Tabs Header */}
+        <div className="flex items-center gap-2 px-8 pt-4 border-b border-stone-200 bg-stone-50/50">
           <button 
             onClick={() => setActiveTab('chat')}
             className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-t-lg transition-colors cursor-pointer ${
               activeTab === 'chat' 
-                ? 'bg-white text-stone-900 border border-b-0 border-stone-200' 
+                ? 'bg-white text-stone-900 border border-b-0 border-stone-200 shadow-2xs' 
                 : 'text-stone-500 hover:text-stone-700 hover:bg-stone-100'
             }`}
           >
@@ -71,7 +66,7 @@ export default function ProjectPage() {
               onClick={() => setActiveTab('script')}
               className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-t-lg transition-colors cursor-pointer ${
                 activeTab === 'script' 
-                  ? 'bg-white text-stone-900 border border-b-0 border-stone-200' 
+                  ? 'bg-white text-stone-900 border border-b-0 border-stone-200 shadow-2xs' 
                   : 'text-stone-500 hover:text-stone-700 hover:bg-stone-100'
               }`}
             >
@@ -84,13 +79,13 @@ export default function ProjectPage() {
             <button 
               onClick={() => setActiveTab('characters')}
               className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-t-lg transition-colors cursor-pointer ${
-                activeTab === 'characters' 
-                  ? 'bg-white text-stone-900 border border-b-0 border-stone-200' 
+                activeTab === 'characters' || activeTab === 'characters_tab'
+                  ? 'bg-white text-stone-900 border border-b-0 border-stone-200 shadow-2xs' 
                   : 'text-stone-500 hover:text-stone-700 hover:bg-stone-100'
               }`}
             >
               <Users className="w-4 h-4" />
-              Characters {workflowState?.approval_states?.characters_approved ? strings.workspace.projectPage.tabs.approved : strings.workspace.projectPage.tabs.review}
+              {strings.workspace.projectPage.tabs.characters || 'Characters'} {workflowState?.approval_states?.characters_approved ? strings.workspace.projectPage.tabs.approved : strings.workspace.projectPage.tabs.review}
             </button>
           )}
 
@@ -99,7 +94,7 @@ export default function ProjectPage() {
               onClick={() => setActiveTab('audio')}
               className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-t-lg transition-colors cursor-pointer ${
                 activeTab === 'audio' 
-                  ? 'bg-white text-stone-900 border border-b-0 border-stone-200' 
+                  ? 'bg-white text-stone-900 border border-b-0 border-stone-200 shadow-2xs' 
                   : 'text-stone-500 hover:text-stone-700 hover:bg-stone-100'
               }`}
             >
@@ -113,7 +108,7 @@ export default function ProjectPage() {
               onClick={() => setActiveTab('video')}
               className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-t-lg transition-colors cursor-pointer ${
                 activeTab === 'video' 
-                  ? 'bg-white text-stone-900 border border-b-0 border-stone-200 font-semibold' 
+                  ? 'bg-white text-stone-900 border border-b-0 border-stone-200 font-semibold shadow-2xs' 
                   : 'text-stone-500 hover:text-stone-700 hover:bg-stone-100'
               }`}
             >
@@ -131,7 +126,7 @@ export default function ProjectPage() {
           <div className={`absolute inset-0 ${activeTab === 'script' ? 'block' : 'hidden'}`}>
             <ScriptViewer project={project} workflowState={workflowState} />
           </div>
-          <div className={`absolute inset-0 ${activeTab === 'characters' ? 'block' : 'hidden'}`}>
+          <div className={`absolute inset-0 ${activeTab === 'characters' || activeTab === 'characters_tab' ? 'block' : 'hidden'}`}>
             <CharacterViewer workflowState={workflowState} projectId={id} onRefreshState={fetchState} />
           </div>
           <div className={`absolute inset-0 ${activeTab === 'audio' ? 'block' : 'hidden'}`}>
@@ -147,6 +142,7 @@ export default function ProjectPage() {
       <div className="w-1/4 min-w-[280px] max-w-[320px] h-full flex-shrink-0">
         <ArtifactManager 
           project={project} 
+          workflowState={workflowState}
           onSelectScript={() => setActiveTab('script')} 
           hasScript={hasScript}
           onSelectCharacters={() => setActiveTab('characters')}

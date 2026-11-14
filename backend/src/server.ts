@@ -9,12 +9,34 @@ import { requestLogger } from './middleware/requestLogger';
 const app = express();
 
 app.use(cors({ origin: 'http://localhost:5173', credentials: true }));
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(cookieParser());
 app.use(requestLogger);
 
 import authRoutes from './api/auth.routes';
 import projectRoutes from './api/project.routes';
+import { updateWorkflowState } from './api/message.controller';
+
+// Internal routes (requires internal API key)
+import crypto from 'crypto';
+
+app.put('/api/internal/projects/:projectId/messages/state', (req, res, next) => {
+  const apiKey = req.headers['x-internal-api-key'] as string;
+  const expectedKey = process.env.INTERNAL_API_KEY;
+
+  if (!expectedKey) {
+    console.error('INTERNAL_API_KEY is not set in environment');
+    res.status(500).json({ error: 'Server configuration error' });
+    return;
+  }
+
+  if (!apiKey || apiKey.length !== expectedKey.length || !crypto.timingSafeEqual(Buffer.from(apiKey), Buffer.from(expectedKey))) {
+    res.status(401).json({ error: 'Unauthorized internal access' });
+    return;
+  }
+  next();
+}, updateWorkflowState);
 
 app.use('/api/auth', authRoutes);
 app.use('/api/projects', projectRoutes);

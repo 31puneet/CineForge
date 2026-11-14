@@ -60,7 +60,7 @@ export function ScriptViewer({ workflowState }: ScriptViewerProps) {
         <div className="flex justify-between items-center bg-stone-50 border-b border-stone-200 px-8 py-3">
           <div className="flex items-center gap-2 text-stone-500 text-sm">
             <Clock className="w-4 h-4" />
-            <span>Script History</span>
+            <span>{strings.workspace.scriptViewer.historyTitle}</span>
           </div>
           <select 
             value={selectedVersion}
@@ -69,13 +69,13 @@ export function ScriptViewer({ workflowState }: ScriptViewerProps) {
           >
             {scriptHistory.map((historyItem: any) => (
               <option key={historyItem.version} value={historyItem.version}>
-                Version {historyItem.version} {historyItem.version === currentVersion ? '(Latest)' : ''}
+                {strings.workspace.versioning.version} {historyItem.version} {historyItem.version === currentVersion ? strings.workspace.versioning.latest : ''}
               </option>
             )).reverse()}
             {/* If script_history doesn't contain the current version yet, show it */}
             {!scriptHistory.find((h: any) => h.version === currentVersion) && (
                <option value={currentVersion}>
-                 Version {currentVersion} (Latest)
+                 {strings.workspace.versioning.version} {currentVersion} {strings.workspace.versioning.latest}
                </option>
             )}
           </select>

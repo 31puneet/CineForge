@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getMessages, sendMessage, getWorkflowState, respondToApproval, regenerateShot } from './message.controller';
+import { getMessages, sendMessage, getWorkflowState, respondToApproval, regenerateShot, updateWorkflowState } from './message.controller';
 import { requireAuth } from '../middleware/requireAuth';
 
 const router = Router({ mergeParams: true });

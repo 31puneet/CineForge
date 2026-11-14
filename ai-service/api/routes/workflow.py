@@ -4,6 +4,7 @@ from typing import Dict, Any, Optional
 import asyncio
 import json
 import traceback
+import os
 from langchain_core.messages import HumanMessage
 from fastapi.responses import StreamingResponse
 
@@ -110,6 +111,50 @@ def are_video_shots_valid(state: Dict[str, Any]) -> bool:
 async def start_workflow(req: StartWorkflowRequest):
     cached = load_persisted_state(req.project_id)
     
+    # Process potential attachments
+    content_blocks = [{"type": "text", "text": req.user_prompt}]
+    if req.metadata and "attachments" in req.metadata:
+        for att in req.metadata["attachments"]:
+            mime_type = "unknown"
+            if "data:" in att.get("url", ""):
+                mime_type = att["url"].split(";")[0].replace("data:", "")
+                
+            if att.get("type") == "image_url" or "image/" in mime_type:
+                content_blocks.append({
+                    "type": "image_url",
+                    "image_url": {"url": att.get("url")}
+                })
+            else:
+                try:
+                    import base64, io
+                    b64_str = att.get("url", "")
+                    if "," in b64_str:
+                        b64_str = b64_str.split(",", 1)[1]
+                    file_bytes = base64.b64decode(b64_str)
+                    
+                    extracted_text = ""
+                    if "pdf" in mime_type:
+                        import fitz
+                        doc = fitz.open(stream=file_bytes, filetype="pdf")
+                        for page in doc:
+                            extracted_text += page.get_text() + "\n"
+                        doc.close()
+                    elif "word" in mime_type or "officedocument.wordprocessingml" in mime_type:
+                        import docx
+                        doc = docx.Document(io.BytesIO(file_bytes))
+                        for para in doc.paragraphs:
+                            extracted_text += para.text + "\n"
+                    elif "text/plain" in mime_type:
+                        extracted_text = file_bytes.decode("utf-8", errors="ignore")
+                        
+                    if extracted_text.strip():
+                        content_blocks.append({
+                            "type": "text",
+                            "text": f"\n\n[Content from attached file '{att.get('name', 'document')}']:\n{extracted_text}\n"
+                        })
+                except Exception as e:
+                    print(f"Failed to extract document {att.get('name')}: {e}")
+
     prompt_clean = req.user_prompt.strip().lower()
     approval_keywords = [
         "continue", "proceed", "next", "ok", "yes", "go on", "yep", "sure", 
@@ -119,13 +164,12 @@ async def start_workflow(req: StartWorkflowRequest):
     
     if cached and cached.get("script_data"):
         active_state = cached
-        active_state["messages"].append(HumanMessage(content=req.user_prompt))
+        active_state["messages"].append(HumanMessage(content=content_blocks if len(content_blocks) > 1 else req.user_prompt))
         if req.metadata:
             active_state.setdefault("metadata", {}).update(req.metadata)
             
         approval_states = active_state.setdefault("approval_states", {})
         if is_continuation:
-            # Advance whichever stage was pending approval
             if not approval_states.get("script_approved") and active_state.get("script_data"):
                 approval_states["script_approved"] = True
                 respond_to_approval(req.project_id, True)
@@ -140,12 +184,10 @@ async def start_workflow(req: StartWorkflowRequest):
                     approval_states["video_approved"] = True
                     respond_to_approval(req.project_id, True)
                 else:
-                    # Incomplete or failed clips: resume video generation to produce valid clips
                     approval_states["video_approved"] = False
                     active_state["current_stage"] = "video"
                     respond_to_approval(req.project_id, True)
             elif active_state.get("current_stage") == "editor_failed":
-                # Editor failed previously due to missing/invalid clips: re-evaluate or resume video generation
                 if are_video_shots_valid(active_state):
                     approval_states["video_approved"] = True
                     respond_to_approval(req.project_id, True)
@@ -154,20 +196,20 @@ async def start_workflow(req: StartWorkflowRequest):
                     active_state["current_stage"] = "video"
                     respond_to_approval(req.project_id, True)
         else:
-            # User provided revision feedback: unblock wait_for_approval with False and the reason!
             respond_to_approval(req.project_id, False, req.user_prompt)
         save_persisted_state(req.project_id, active_state)
     else:
-        # Submitting a brand new film idea starts script generation with the new prompt
         active_state = {
             "project_id": req.project_id,
             "metadata": req.metadata or (cached.get("metadata", {}) if cached else {}),
-            "messages": [HumanMessage(content=req.user_prompt)],
+            "messages": [HumanMessage(content=content_blocks if len(content_blocks) > 1 else req.user_prompt)],
             "current_stage": "script",
             "script_data": None,
             "script_version": 0,
             "script_history": [],
             "characters": [],
+            "character_version": 0,
+            "character_history": [],
             "voiceovers": [],
             "video_shots": [],
             "approval_states": {
@@ -177,6 +219,7 @@ async def start_workflow(req: StartWorkflowRequest):
                 "video_approved": False
             }
         }
+        }
     
     config = {"configurable": {"thread_id": req.project_id}}
     
@@ -184,14 +227,50 @@ async def start_workflow(req: StartWorkflowRequest):
     emitter = WorkflowEventEmitter(req.project_id)
     config["configurable"]["emitter"] = emitter
     
-    def update_state(s):
+    async def update_state(s):
         save_persisted_state(req.project_id, s)
+        _memory_store[req.project_id] = s
+        
+        backend_url = os.getenv("BACKEND_URL", "http://cineforge-backend:3000")
+        internal_api_key = os.environ.get("INTERNAL_API_KEY")
+        if not internal_api_key:
+            return
+
+        try:
+            import httpx
+            from langchain_core.messages import BaseMessage
+            serializable_state = dict(s)
+            if "messages" in serializable_state:
+                cleaned_messages = []
+                for m in serializable_state.get("messages", []):
+                    if isinstance(m, BaseMessage):
+                        content = m.content
+                        if isinstance(content, list):
+                            content = [
+                                {"type": "text", "text": "[Image attached]"} if b.get("type") == "image_url" else b
+                                for b in content
+                            ]
+                        cleaned_messages.append({"role": m.type, "content": content})
+                    else:
+                        cleaned_messages.append(m)
+                serializable_state["messages"] = cleaned_messages
+
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.put(
+                    f"{backend_url}/api/internal/projects/{req.project_id}/messages/state", 
+                    json=serializable_state,
+                    headers={"x-internal-api-key": internal_api_key}
+                )
+                resp.raise_for_status()
+        except Exception as e:
+            print(f"Failed to persist state to backend: {e}")
     config["configurable"]["update_state"] = update_state
 
     async def run_graph():
         try:
             final_state = await graph_app.ainvoke(active_state, config)
             save_persisted_state(req.project_id, final_state)
+            await update_state(final_state)
         except Exception as e:
             # Send error event
             traceback.print_exc()
@@ -427,11 +506,11 @@ async def get_workflow_state(project_id: str):
         "script_version": state.get("script_version", 0),
         "script_history": state.get("script_history", []),
         "characters": state.get("characters", []),
+        "character_version": state.get("character_version", 0),
+        "character_history": state.get("character_history", []),
         "voiceovers": state.get("voiceovers", []),
         "video_shots": state.get("video_shots", []),
         "final_video_url": state.get("final_video_url"),
         "total_film_duration": state.get("total_film_duration", 60.0),
         "approval_states": state.get("approval_states", {})
     }
-
-

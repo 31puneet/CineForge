@@ -2,11 +2,13 @@ import { useState, useEffect, useCallback } from 'react';
 import apiClient from '../api/client';
 
 export interface Character {
-  id: string;
+  id?: string;
+  character_id?: string;
   name: string;
   role?: string;
   gender?: string;
-  description: string;
+  description?: string;
+  visual_description?: string;
   image_url?: string;
   image_prompt?: string;
 }
@@ -43,6 +45,8 @@ export interface WorkflowState {
   script_version?: number;
   script_history?: any[];
   characters?: Character[];
+  character_version?: number;
+  character_history?: any[];
   voiceovers?: Voiceover[];
   video_shots?: VideoShot[];
   final_video_url?: string;

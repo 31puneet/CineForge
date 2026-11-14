@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Send, FileText, Loader2, ChevronDown, ChevronRight, CheckCircle2, Circle, Users, Volume2, Film } from 'lucide-react';
+import { Send, FileText, Loader2, ChevronDown, ChevronRight, CheckCircle2, Circle, Users, Volume2, Film, Paperclip, X, Image as ImageIcon } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 
 import strings from '../../constants/strings.json';
@@ -43,6 +43,9 @@ export function AgentChat({ project, workflowState, onFetchState, onSwitchTab }:
   const [approvalStage, setApprovalStage] = useState('');
   const [rejectionReason, setRejectionReason] = useState('');
   const [showReasonInput, setShowReasonInput] = useState(false);
+  const [attachments, setAttachments] = useState<{type: string, url: string, name: string}[]>([]);
+  
+  const fileInputRef = useRef<HTMLInputElement>(null);
   
   // Check if approval is needed either from live stream OR persisted workflowState
   const effectiveApprovalStage = approvalStage || (() => {
@@ -115,6 +118,23 @@ export function AgentChat({ project, workflowState, onFetchState, onSwitchTab }:
     }
   };
 
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const base64 = event.target?.result as string;
+      setAttachments(prev => [...prev, {
+        type: file.type.startsWith('image/') ? 'image_url' : 'file',
+        url: base64,
+        name: file.name
+      }]);
+    };
+    reader.readAsDataURL(file);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim() || isLoading || !projectId) return;
@@ -135,13 +155,17 @@ export function AgentChat({ project, workflowState, onFetchState, onSwitchTab }:
     setThinkingExpanded(true);
     setApprovalPending(false);
     setShowReasonInput(false);
+    setAttachments([]);
 
     // Optimistically add user message
     const tempUserMessage: Message = {
       _id: Date.now().toString(),
       role: 'user',
       content: userMessageContent,
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
+      metadata: {
+        attachments: attachments.length > 0 ? attachments : undefined
+      }
     };
     
     setMessages(prev => [...prev, tempUserMessage]);
@@ -157,7 +181,8 @@ export function AgentChat({ project, workflowState, onFetchState, onSwitchTab }:
         body: JSON.stringify({
           content: userMessageContent,
           metadata: {
-            targetDurationSeconds: parseInt(selectedDuration)
+            targetDurationSeconds: parseInt(selectedDuration),
+            attachments: attachments.length > 0 ? attachments : undefined
           }
         })
       });
@@ -286,42 +311,48 @@ export function AgentChat({ project, workflowState, onFetchState, onSwitchTab }:
               </div>
             )}
             
-            <div className={`p-4 max-w-[80%] shadow-sm text-sm leading-relaxed whitespace-pre-wrap flex flex-col gap-2
-              ${msg.role === 'user' 
-                ? 'bg-orange-500 text-white rounded-2xl rounded-tr-none' 
-                : 'bg-white border border-stone-200 text-stone-800 rounded-2xl rounded-tl-none'}`}
-            >
-              <div className="prose prose-sm prose-stone max-w-none">
-                {msg.role === 'user' ? (
-                  msg.content
-                ) : (
-                  <ReactMarkdown>{msg.content}</ReactMarkdown>
+            <div className="flex flex-col gap-2 items-end">
+              {msg.metadata?.attachments && msg.metadata.attachments.length > 0 && (
+                <div className="flex flex-wrap gap-2 justify-end mb-1">
+                  {msg.metadata.attachments.map((att: any, idx: number) => (
+                    <div key={idx} className="overflow-hidden rounded-xl border border-stone-200 shadow-sm max-w-[200px]">
+                      {att.type === 'image_url' ? (
+                        <img src={att.url} alt="attachment" className="w-full h-auto object-cover" />
+                      ) : (
+                        <div className="flex items-center gap-2 bg-white px-3 py-2 text-stone-700 text-sm">
+                          <FileText className="w-4 h-4 text-stone-400" />
+                          <span className="truncate max-w-[150px]">{att.name || 'Document'}</span>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+              
+              <div className={`p-4 max-w-[100%] shadow-sm text-sm leading-relaxed whitespace-pre-wrap flex flex-col gap-2
+                ${msg.role === 'user' 
+                  ? 'bg-orange-500 text-white rounded-2xl rounded-tr-none' 
+                  : 'bg-white border border-stone-200 text-stone-800 rounded-2xl rounded-tl-none'}`}
+              >
+                <div className="prose prose-sm prose-stone max-w-none">
+                  {msg.role === 'user' ? (
+                    msg.content
+                  ) : (
+                    <ReactMarkdown>{msg.content}</ReactMarkdown>
+                  )}
+                </div>
+                
+                {msg.metadata?.link && (
+                  <button 
+                    onClick={() => onSwitchTab?.(msg.metadata.link.target || 'script')}
+                    className="flex items-center gap-2 mt-2 px-3 py-2 bg-stone-50 border border-stone-200 rounded-lg text-stone-700 hover:bg-orange-50 transition-colors w-max"
+                  >
+                    <FileText className="w-4 h-4 text-orange-500" />
+                    <span className="font-medium text-xs">{msg.metadata.link.label}</span>
+                  </button>
                 )}
               </div>
-              
-              {msg.metadata?.link && (
-                <button 
-                  onClick={() => {
-                    const target = msg.metadata.link.target || '';
-                    if (target.includes('character')) onSwitchTab?.('characters');
-                    else if (target.includes('audio') || target.includes('voiceover')) onSwitchTab?.('audio');
-                    else if (target.includes('video') || target.includes('film')) onSwitchTab?.('video');
-                    else onSwitchTab?.('script');
-                  }}
-                  className="flex items-center gap-2 mt-2 px-3 py-2 bg-stone-50 border border-stone-200 rounded-lg text-stone-700 hover:bg-orange-50 transition-colors w-max cursor-pointer"
-                >
-                  {msg.metadata.link.target?.includes('character') ? (
-                    <Users className="w-4 h-4 text-orange-500" />
-                  ) : msg.metadata.link.target?.includes('audio') || msg.metadata.link.target?.includes('voiceover') ? (
-                    <Volume2 className="w-4 h-4 text-cyan-600" />
-                  ) : msg.metadata.link.target?.includes('video') ? (
-                    <Film className="w-4 h-4 text-orange-600" />
-                  ) : (
-                    <FileText className="w-4 h-4 text-orange-500" />
-                  )}
-                  <span className="font-medium text-xs">{msg.metadata.link.label}</span>
-                </button>
-              )}
+
             </div>
 
 
@@ -476,14 +507,43 @@ export function AgentChat({ project, workflowState, onFetchState, onSwitchTab }:
 
       {/* Input Area */}
       <div className="p-4 bg-white border-t border-stone-200">
+        {attachments.length > 0 && (
+          <div className="flex flex-wrap gap-2 mb-2 max-w-4xl mx-auto">
+            {attachments.map((att, idx) => (
+              <div key={idx} className="flex items-center gap-2 bg-stone-100 px-3 py-1.5 rounded-lg border border-stone-200 text-sm">
+                {att.type === 'image_url' ? <ImageIcon className="w-4 h-4 text-orange-500" /> : <FileText className="w-4 h-4 text-stone-500" />}
+                <span className="truncate max-w-[150px]">{att.name}</span>
+                <button type="button" onClick={() => setAttachments(prev => prev.filter((_, i) => i !== idx))} className="text-stone-400 hover:text-stone-700">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
         <form onSubmit={handleSend} className="max-w-4xl mx-auto relative">
+          <input 
+            type="file" 
+            ref={fileInputRef} 
+            onChange={handleFileChange} 
+            className="hidden" 
+            accept="image/*,application/pdf,.doc,.docx,text/plain"
+          />
+          <button 
+            type="button" 
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isLoading || approvalPending}
+            className="absolute left-3 top-1/2 -translate-y-1/2 p-2 text-stone-400 hover:text-stone-700 disabled:opacity-50 transition-colors"
+            title="Attach file"
+          >
+            <Paperclip className="w-4 h-4" />
+          </button>
           <input
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             disabled={isLoading}
-            placeholder={isLoading ? "Agent is working..." : isApprovalNeeded ? "Click 'Yes, proceed' above or type feedback..." : strings.workspace.agentChat.inputPlaceholder}
-            className="w-full pl-6 pr-16 py-4 bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 transition-all shadow-inner disabled:opacity-50"
+            placeholder={isLoading ? "Agent is working..." : (typeof isApprovalNeeded !== 'undefined' && isApprovalNeeded) || (typeof approvalPending !== 'undefined' && approvalPending) ? "Please approve or reject above..." : strings.workspace.agentChat.inputPlaceholder}
+            className="w-full pl-12 pr-32 py-4 bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 transition-all shadow-inner disabled:opacity-50" 
           />
           <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-2">
             <select
@@ -493,7 +553,7 @@ export function AgentChat({ project, workflowState, onFetchState, onSwitchTab }:
               className="bg-transparent text-stone-500 text-xs font-medium cursor-pointer focus:outline-none hover:text-stone-800 transition-colors"
               title="Target Duration"
             >
-              <option value="15">15s</option>
+              <option value="10">10s</option>
               <option value="30">30s</option>
               <option value="60">1m</option>
               <option value="120">2m</option>

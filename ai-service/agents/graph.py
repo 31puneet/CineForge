@@ -4,7 +4,7 @@ from schemas.state import FilmGraphState
 from langchain_core.messages import AIMessage, SystemMessage, HumanMessage
 
 from core.providers import GeminiAdapter, get_image_provider, get_audio_provider, extract_text_content
-from schemas.llm import LLMScriptData, LLMCharactersData
+from schemas.llm import LLMScriptData, LLMCharacterData, LLMCharactersData
 from core.config import settings
 
 PROVIDER_CLIP_SECONDS: float = getattr(settings, "PROVIDER_CLIP_SECONDS", 8.0)
@@ -86,11 +86,13 @@ CRITICAL MANDATE: You MUST remain 100% faithful and dedicated to the user's spec
 - Include lively spoken dialogue with explicit character speaker names so voiceover tracks can be generated.
 Brainstorm the script outline line by line adhering strictly to the user's idea."""
         else:
+            previous_script_json = json.dumps(state.get("script_data", {}), indent=2)
             system_prompt = f"""You are an expert AI Film Director and Screenwriter.
 CRITICAL MANDATE: You MUST remain 100% faithful and dedicated to the user's specific story request, characters, genre, and tone.
 - If the user asks for specific characters, you MUST feature THOSE EXACT CHARACTERS in your script.
 - Target duration: {duration} seconds. Structure into {num_shots} shots, each around {PROVIDER_CLIP_LENGTH_SEC:.1f} seconds to match video provider clip length.
-- Incorporate user feedback faithfully into the revision.
+- Incorporate user feedback faithfully into the revision based on previous script:
+{previous_script_json}
 Output your thoughts line by line."""
 
         messages_for_llm = [SystemMessage(content=system_prompt)] + state["messages"]
@@ -136,12 +138,15 @@ CRITICAL REQUIREMENTS:
                     json_prompt += f"\n\nPrevious attempt generated only {len(structured_data.shots)} shots. You MUST generate at least {num_shots} distinct, fully developed shots."
                     continue
                 script_data_dict = structured_data.model_dump()
+                
+
+                        
                 break
-            except (json.JSONDecodeError, ValidationError) as e:
+            except (json.JSONDecodeError, ValidationError, ValueError) as e:
                 if attempt == max_retries - 1:
                     raise Exception(f"Failed to generate structured script after {max_retries} attempts: {str(e)}")
                 # Append error feedback and try again
-                json_prompt += f"\n\nYour previous output failed with error: {str(e)}. Please try again."
+                json_prompt += f"\n\nYour previous output failed with error: {str(e)}. Please try again and follow the rules strictly."
 
         # Ensure shot durations sum to target duration, each <= PROVIDER_CLIP_SECONDS
         if script_data_dict and "shots" in script_data_dict:
@@ -177,11 +182,11 @@ CRITICAL REQUIREMENTS:
         # Save state manually since we will pause
         update_state_fn = config["configurable"].get("update_state")
         if update_state_fn:
-            update_state_fn(state)
+            await update_state_fn(state)
         
         if emitter:
             # Send message with link
-            await emitter.push("message", content=f"I have drafted your script (v{version}). Take a look here:", link={"label": f"v{version}_script.json", "target": "script_tab"})
+            await emitter.push("message", content=f"I have drafted your script (v{version}). Take a look here:", link={"label": f"v{version}_script.json", "target": "script"})
             # Request approval
             await emitter.push("approval_request", stage="script")
             
@@ -198,13 +203,12 @@ CRITICAL REQUIREMENTS:
                 summary_msg = f"🔁 Revision requested:\nQ: Does this script look good to you?\nA: No — '{reason}'\n\nLet me revise the script..."
                 await emitter.push("message", content=summary_msg)
                 # Append rejection feedback to messages silently so the LLM knows why it was rejected
-                state["messages"].append(HumanMessage(content=f"User rejected the script version {version} with this feedback: {reason}. Please revise it."))
+                state["messages"].append(HumanMessage(content=f"I rejected the script version {version} with this feedback: {reason}. Please revise it."))
         else:
             # If no emitter (e.g. running outside API), just auto-approve for now
             approved = True
 
     return state
-
 
 async def character_agent_node(state: FilmGraphState, config: RunnableConfig):
     emitter = config["configurable"].get("emitter")
@@ -212,16 +216,9 @@ async def character_agent_node(state: FilmGraphState, config: RunnableConfig):
 
     state["current_stage"] = "character"
     if update_state_fn:
-        update_state_fn(state)
+        await update_state_fn(state) if asyncio.iscoroutinefunction(update_state_fn) else update_state_fn(state)
 
-    if emitter:
-        await emitter.push("status", content="Analyzing approved script to identify and design cast of characters...")
-        await emitter.push("plan_update", current="Character Design")
-
-    script_data = state.get("script_data")
-    if not script_data:
-        raise ValueError("Script data must exist before running character agent.")
-
+    version = state.get("character_version", 0)
     adapter = GeminiAdapter()
     image_adapter = get_image_provider()
 
@@ -230,112 +227,87 @@ async def character_agent_node(state: FilmGraphState, config: RunnableConfig):
 
     while not approved:
         if emitter:
-            await emitter.push("status", content="Brainstorming visual identity, costumes, and concepts for each character...")
+            await emitter.push("status", content="Extracting characters..." if version == 0 else "Revising characters based on feedback...")
+            await emitter.push("plan", steps=["Script Generation", "Character Design", "Voiceover", "Video Generation", "Editing"], current="Character Design")
 
-        prompt_context = f"""Script Global Narrative:
-{script_data.get('global_narrative', '')}
+        script_data = state.get("script_data", {})
+        script_json_str = json.dumps(script_data, indent=2)
 
-Shots and Dialogue:
-"""
-        for s in script_data.get("shots", []):
-            speaker = s.get("speaker") or "None"
-            dialogue = s.get("dialogue") or "None"
-            prompt_context += f"- Shot {s.get('shot_id', '')}: Speaker={speaker}, Dialogue=\"{dialogue}\", Visual={s.get('visual_description', '')}\n"
+        prompt = f"""Here is the approved movie script:
+{script_json_str}
 
-        system_prompt = """You are an expert AI Film Character Designer & Art Director.
-Your task is to identify and flesh out all distinct characters in the movie script (both main protagonists and supporting characters who speak or perform key actions).
-CRITICAL ART DIRECTION RULES:
-1. Genre & Style Fidelity:
-   - For Anime / Cartoon / Animation (e.g. Doraemon, Nobita, anime characters): Formulate 'image_prompt' using authentic 2D anime illustration aesthetic (e.g. 'official anime art style, vibrant cel-shaded illustration, Studio Ghibli aesthetic, clean line art, crisp colors, faithful iconic design').
-   - For Normal / Grounded / Everyday characters (e.g. students, parents, teachers, professionals): Formulate 'image_prompt' using realistic photography aesthetic (e.g. 'photorealistic portrait, 35mm film photography, authentic natural lighting, contemporary casual wear, relatable human expression, high resolution').
-   - For Complex Fantasy / Sci-Fi characters: Formulate 'image_prompt' using rich cinematic concept art aesthetic (e.g. 'cinematic concept art portrait, intricate detailed costume, atmospheric lighting, 8k').
-2. For each character, formulate a rich, vivid design concept with distinct visual style, clothing, colors, face, physique, and age-appropriate persona."""
+Extract and design all unique characters appearing in this script.
+For each character, provide:
+- id / character_id (e.g. 'char_1')
+- name (e.g. 'Sarah (char_1)' or character name)
+- role (e.g. 'Protagonist', 'Detective', 'Student')
+- gender ('male' or 'female')
+- description & visual_description: highly detailed physical appearance (face, costume, demeanor)
+- image_prompt: visual prompt for image generation matching the genre."""
 
         if rejection_feedback:
-            system_prompt += f"\n\nCRITICAL USER FEEDBACK FROM PREVIOUS REJECTION:\n{rejection_feedback}\nYou MUST revise the characters according to this feedback."
+            prompt += f"\n\nUser feedback from previous rejection:\n{rejection_feedback}\nPlease revise the characters according to this feedback."
 
-        messages_for_llm = [
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=f"Here is the approved script:\n{prompt_context}\n\nPlease brainstorm the character concepts line by line.")
-        ]
-
-        think_response = AIMessage(content="")
-        if emitter:
-            async for chunk in adapter.astream(messages_for_llm, config=config):
-                chunk_text = extract_text_content(chunk.content)
-                think_response.content += chunk_text
-                await emitter.push("thinking", content=chunk_text)
-        else:
-            response = await adapter.ainvoke(messages_for_llm, config=config)
-            think_response = AIMessage(content=extract_text_content(response.content))
-
-        # 2. Structured Output
-        json_prompt = f"Based on this brainstorm:\n{think_response.content}\n\nGenerate the structured character cast JSON conforming to the schema. Include all essential characters."
-        
+        script_data_dict = None
         max_retries = 3
-        characters_data_dict = None
         for attempt in range(max_retries):
             try:
-                structured_data = await adapter.aget_structured_output(json_prompt, LLMCharactersData)
-                characters_data_dict = structured_data.model_dump()
+                structured_data = await adapter.aget_structured_output(prompt, LLMCharacterData)
+                script_data_dict = structured_data.model_dump()
                 break
-            except (json.JSONDecodeError, ValidationError) as e:
+            except Exception as e:
                 if attempt == max_retries - 1:
-                    raise Exception(f"Failed to generate structured characters after {max_retries} attempts: {str(e)}")
-                json_prompt += f"\n\nPrevious attempt failed: {str(e)}. Please correct and output valid JSON."
+                    raise Exception(f"Failed to generate characters: {str(e)}")
+                prompt += f"\n\nError: {str(e)}. Please try again."
 
-        characters_list = []
-        if characters_data_dict and "characters" in characters_data_dict:
-            raw_characters = characters_data_dict["characters"]
-            for idx, c in enumerate(raw_characters):
-                char_id = c.get("id") or f"char_{idx+1}"
-                char_name = c.get("name", f"Character {idx+1}")
-                char_prompt = c.get("image_prompt", "")
-                
-                if emitter:
-                    await emitter.push("status", content=f"Generating concept portrait for {char_name}...")
+        version += 1
+        state["character_version"] = version
+        char_list = script_data_dict.get("characters", []) if script_data_dict else []
 
-                seed = abs(hash(f"{state.get('project_id', '')}_{char_id}_{char_name}")) % 1000000
-                img_url = await image_adapter.generate_image(char_prompt, seed=seed)
+        # Generate character concept portraits
+        for idx, char in enumerate(char_list):
+            char_id = char.get("character_id") or char.get("id") or f"char_{idx+1}"
+            char["id"] = char_id
+            char["character_id"] = char_id
+            prompt_text = char.get("image_prompt") or char.get("visual_description") or char.get("description") or char.get("name")
+            if prompt_text:
+                try:
+                    seed = abs(hash(f"{state.get('project_id', '')}_{char_id}")) % 1000000
+                    img_url = await image_adapter.generate_image(prompt_text, seed=seed, aspect_ratio="1:1")
+                    if img_url:
+                        char["image_url"] = img_url
+                except Exception as img_err:
+                    print(f"[Character Agent] Image gen failed for {char_id}: {img_err}")
 
-                characters_list.append({
-                    "id": char_id,
-                    "name": char_name,
-                    "role": c.get("role", "Character"),
-                    "gender": c.get("gender", "male"),
-                    "description": c.get("description", ""),
-                    "image_url": img_url,
-                    "image_prompt": char_prompt
-                })
-
-        state["characters"] = characters_list
+        state["characters"] = char_list
+        history = state.get("character_history", [])
+        history.append({
+            "version": version,
+            "data": copy.deepcopy({"characters": char_list})
+        })
+        state["character_history"] = history
 
         if update_state_fn:
-            update_state_fn(state)
+            await update_state_fn(state) if asyncio.iscoroutinefunction(update_state_fn) else update_state_fn(state)
 
+        char_file_name = f"v{version}_characters.json"
         if emitter:
-            char_count = len(characters_list)
-            char_names = ", ".join(c["name"] for c in characters_list)
-            await emitter.push(
-                "message", 
-                content=f"I have designed the character concepts for your cast (**{char_names}**). Take a look at their concept sheets here:", 
-                link={"label": f"Cast Cards ({char_count})", "target": "characters_tab"}
-            )
-            await emitter.push("approval_request", stage="character")
+            await emitter.push("message", content=f"I have designed the characters (v{version}). Take a look here:", link={"label": char_file_name, "target": "characters_tab"})
+            await emitter.push("approval_request", stage="characters")
 
             response_data = await emitter.wait_for_approval()
             approved = response_data.get("approved", False)
             reason = response_data.get("reason", "")
 
             if approved:
-                await emitter.push("message", content="✅ Character cast approved!\nQ: Do these characters look good to you?\nA: Yes\n\nAdvancing to Stage 3: Voiceover & Audio Agent! 🎙️")
+                await emitter.push("message", content="✅ Characters approved! Proceeding to Voiceover & Video generation.")
                 state["approval_states"]["characters_approved"] = True
                 break
             else:
-                summary_msg = f"🔁 Revision requested:\nQ: Do these characters look good to you?\nA: No — '{reason}'\n\nLet me revise the character designs..."
+                summary_msg = f"🔁 Revision requested:\nQ: Do these characters look good to you?\nA: No — '{reason}'\n\nLet me revise the characters..."
                 await emitter.push("message", content=summary_msg)
                 rejection_feedback = reason
-                state["messages"].append(HumanMessage(content=f"User rejected character designs with feedback: {reason}. Please revise them."))
+                state["messages"].append(HumanMessage(content=f"I rejected the character list version {version} with this feedback: {reason}. Please revise it."))
         else:
             approved = True
 
@@ -678,6 +650,7 @@ async def video_agent_node(state: FilmGraphState, config: RunnableConfig):
   # Build the Graph
 from agents.editor_agent import assemble_video
 
+# Build the Graph
 workflow = StateGraph(FilmGraphState)
 
 workflow.add_node("script_agent", script_agent_node)

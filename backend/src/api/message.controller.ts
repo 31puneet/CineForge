@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { Project } from '../../models/Project';
+import { Project } from '../models/Project';
 
 // Simple in-memory fallback for approval responses if SSE isn't fully routed
 const approvalResolvers = new Map<string, (val: any) => void>();

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import type { WorkflowState, Character } from '../../hooks/useWorkflowState';
+import { useTheme } from '../../context/ThemeContext';
 import { Users, Sparkles, CheckCircle2, RefreshCw, Loader2, Clock, User } from 'lucide-react';
 import apiClient from '../../api/client';
 import strings from '../../constants/strings.json';
@@ -11,6 +12,7 @@ interface CharacterViewerProps {
 }
 
 export function CharacterViewer({ workflowState, projectId, onRefreshState }: CharacterViewerProps) {
+  const { isDark } = useTheme();
   const currentVersion = workflowState?.character_version || 0;
   const characterHistory = workflowState?.character_history || [];
   const [selectedVersion, setSelectedVersion] = useState<number>(currentVersion);
@@ -90,17 +92,17 @@ export function CharacterViewer({ workflowState, projectId, onRefreshState }: Ch
   }
 
   return (
-    <div className="h-full flex flex-col bg-white overflow-hidden">
+    <div className={`h-full flex flex-col overflow-hidden transition-colors duration-300 ${isDark ? 'bg-[#0E111A] text-slate-100' : 'bg-white text-stone-900'}`}>
       {/* Header Banner */}
-      <div className="flex justify-between items-center bg-stone-50 border-b border-stone-200 px-8 py-3.5 flex-shrink-0">
+      <div className={`flex justify-between items-center border-b px-8 py-3.5 flex-shrink-0 transition-colors ${isDark ? 'bg-[#0B0D15] border-white/10' : 'bg-stone-50 border-stone-200'}`}>
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-lg bg-orange-500/10 flex items-center justify-center text-orange-600">
             <Users className="w-4 h-4" />
           </div>
           <div>
-            <h2 className="text-sm font-semibold text-stone-900 flex items-center gap-2">
+            <h2 className={`text-sm font-semibold flex items-center gap-2 ${isDark ? 'text-white' : 'text-stone-900'}`}>
               {strings.workspace.characterViewer.title}
-              <span className="text-xs px-2 py-0.5 rounded-full bg-stone-200 text-stone-700 font-normal">
+              <span className={`text-xs px-2 py-0.5 rounded-full font-normal ${isDark ? 'bg-white/10 text-slate-300' : 'bg-stone-200 text-stone-700'}`}>
                 {charactersToRender.length} {charactersToRender.length === 1 ? 'Character' : 'Characters'}
               </span>
             </h2>
@@ -115,7 +117,9 @@ export function CharacterViewer({ workflowState, projectId, onRefreshState }: Ch
               <select
                 value={selectedVersion}
                 onChange={(e) => setSelectedVersion(Number(e.target.value))}
-                className="text-xs bg-white border border-stone-300 rounded-md px-2.5 py-1 focus:outline-none focus:ring-1 focus:ring-orange-500"
+                className={`text-xs rounded-md px-2.5 py-1 focus:outline-none focus:ring-1 focus:ring-orange-500 border ${
+                  isDark ? 'bg-[#141926] border-white/10 text-slate-200' : 'bg-white border-stone-300 text-stone-900'
+                }`}
               >
                 {[...Array(currentVersion)].map((_, i) => {
                   const v = currentVersion - i;
@@ -156,7 +160,7 @@ export function CharacterViewer({ workflowState, projectId, onRefreshState }: Ch
       </div>
 
       {/* Characters Grid */}
-      <div className="flex-1 overflow-y-auto p-8 bg-[#FAF7F2]">
+      <div className={`flex-1 overflow-y-auto p-8 transition-colors duration-300 ${isDark ? 'bg-[#0A0D14]' : 'bg-[#FAF7F2]'}`}>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 max-w-6xl mx-auto">
           {charactersToRender.map((char: any, idx: number) => {
             const charId = char.character_id || char.id || `char_${idx + 1}`;
@@ -164,7 +168,9 @@ export function CharacterViewer({ workflowState, projectId, onRefreshState }: Ch
               <div
                 key={charId}
                 onClick={() => setSelectedCharacter({ ...char, id: charId })}
-                className="group bg-white rounded-2xl border border-stone-200/80 hover:border-orange-300 shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden flex flex-col cursor-pointer"
+                className={`group rounded-2xl shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden flex flex-col cursor-pointer border ${
+                  isDark ? 'bg-[#121622] border-white/10 hover:border-orange-500/50' : 'bg-white border-stone-200/80 hover:border-orange-300'
+                }`}
               >
                 {/* Concept Portrait */}
                 <div className="relative aspect-[3/4] w-full bg-stone-900 overflow-hidden">
@@ -192,19 +198,25 @@ export function CharacterViewer({ workflowState, projectId, onRefreshState }: Ch
                 {/* Character Details */}
                 <div className="p-5 flex flex-col flex-1">
                   <div className="flex items-center justify-between gap-2 mb-2">
-                    <h3 className="font-serif font-bold text-stone-900 text-base group-hover:text-orange-600 transition-colors">
+                    <h3 className={`font-serif font-bold text-base transition-colors ${
+                      isDark ? 'text-white group-hover:text-orange-400' : 'text-stone-900 group-hover:text-orange-600'
+                    }`}>
                       {char.name}
                     </h3>
-                    <span className="text-[10px] font-mono uppercase tracking-wider text-stone-400 bg-stone-50 px-2 py-0.5 rounded border border-stone-200">
+                    <span className={`text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded border ${
+                      isDark ? 'text-slate-400 bg-white/5 border-white/10' : 'text-stone-400 bg-stone-50 border-stone-200'
+                    }`}>
                       {charId}
                     </span>
                   </div>
 
-                  <p className="text-stone-600 text-xs leading-relaxed line-clamp-3 mb-4">
+                  <p className={`text-xs leading-relaxed line-clamp-3 mb-4 ${isDark ? 'text-slate-300' : 'text-stone-600'}`}>
                     {char.visual_description || char.description}
                   </p>
 
-                  <div className="mt-auto pt-3 border-t border-stone-100 flex items-center justify-between text-[11px] text-stone-400">
+                  <div className={`mt-auto pt-3 border-t flex items-center justify-between text-[11px] ${
+                    isDark ? 'border-white/10 text-slate-500' : 'border-stone-100 text-stone-400'
+                  }`}>
                     <span className="flex items-center gap-1 text-orange-500 font-medium">
                       <Sparkles className="w-3 h-3" /> Click to inspect
                     </span>
@@ -224,7 +236,9 @@ export function CharacterViewer({ workflowState, projectId, onRefreshState }: Ch
           onClick={() => setSelectedCharacter(null)}
         >
           <div 
-            className="bg-white rounded-2xl max-w-2xl w-full border border-stone-200 shadow-2xl overflow-hidden flex flex-col md:flex-row max-h-[85vh]"
+            className={`rounded-2xl max-w-2xl w-full shadow-2xl overflow-hidden flex flex-col md:flex-row max-h-[85vh] border ${
+              isDark ? 'bg-[#121622] border-white/10 text-slate-100' : 'bg-white border-stone-200 text-stone-900'
+            }`}
             onClick={(e) => e.stopPropagation()}
           >
             <div className="md:w-1/2 bg-stone-950 aspect-[3/4] md:aspect-auto relative">
@@ -254,7 +268,7 @@ export function CharacterViewer({ workflowState, projectId, onRefreshState }: Ch
                 </button>
               </div>
 
-              <h2 className="text-2xl font-serif font-bold text-stone-900 mb-4">
+              <h2 className={`text-2xl font-serif font-bold mb-4 ${isDark ? 'text-white' : 'text-stone-900'}`}>
                 {selectedCharacter.name}
               </h2>
 
@@ -262,7 +276,9 @@ export function CharacterViewer({ workflowState, projectId, onRefreshState }: Ch
                 <h4 className="text-xs font-bold text-stone-500 uppercase tracking-wider mb-1.5">
                   Visual Profile
                 </h4>
-                <p className="text-xs text-stone-700 leading-relaxed bg-stone-50 p-3 rounded-xl border border-stone-200">
+                <p className={`text-xs leading-relaxed p-3 rounded-xl border ${
+                  isDark ? 'bg-[#0E111A] border-white/10 text-slate-300' : 'bg-stone-50 border-stone-200 text-stone-700'
+                }`}>
                   {selectedCharacter.visual_description || selectedCharacter.description}
                 </p>
               </div>
@@ -272,13 +288,17 @@ export function CharacterViewer({ workflowState, projectId, onRefreshState }: Ch
                   <h4 className="text-xs font-bold text-stone-500 uppercase tracking-wider mb-1.5">
                     Concept Art Prompt
                   </h4>
-                  <p className="text-[11px] font-mono text-stone-600 bg-stone-100 p-2.5 rounded-lg border border-stone-200 leading-normal">
+                  <p className={`text-[11px] font-mono p-2.5 rounded-lg border leading-normal ${
+                    isDark ? 'bg-[#0E111A] border-white/10 text-slate-400' : 'bg-stone-100 border-stone-200 text-stone-600'
+                  }`}>
                     {selectedCharacter.image_prompt}
                   </p>
                 </div>
               )}
 
-              <div className="mt-auto pt-4 border-t border-stone-100 flex items-center justify-between gap-2">
+              <div className={`mt-auto pt-4 border-t flex items-center justify-between gap-2 ${
+                isDark ? 'border-white/10' : 'border-stone-100'
+              }`}>
                 {projectId && (
                   <button
                     type="button"
@@ -294,7 +314,9 @@ export function CharacterViewer({ workflowState, projectId, onRefreshState }: Ch
                     setSelectedCharacter(null);
                     setShowFeedbackInput(false);
                   }}
-                  className="px-4 py-2 bg-stone-900 hover:bg-stone-800 text-white text-xs font-medium rounded-lg transition-colors ml-auto"
+                  className={`px-4 py-2 text-xs font-medium rounded-lg transition-colors ml-auto cursor-pointer ${
+                    isDark ? 'bg-orange-500 hover:bg-orange-600 text-white' : 'bg-stone-900 hover:bg-stone-800 text-white'
+                  }`}
                 >
                   Close
                 </button>

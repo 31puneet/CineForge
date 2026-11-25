@@ -1,5 +1,6 @@
 import { useState, useRef } from 'react';
 import type { WorkflowState } from '../../hooks/useWorkflowState';
+import { useTheme } from '../../context/ThemeContext';
 import { Volume2, Play, Pause, Sparkles, CheckCircle2, RotateCcw, Loader2, Music2, User, Users } from 'lucide-react';
 import apiClient from '../../api/client';
 
@@ -10,6 +11,7 @@ interface AudioViewerProps {
 }
 
 export function AudioViewer({ workflowState, projectId, onRefreshState }: AudioViewerProps) {
+  const { isDark } = useTheme();
   const voiceovers = workflowState?.voiceovers || [];
   const isApproved = workflowState?.approval_states?.voiceovers_approved;
   const [playingShotId, setPlayingShotId] = useState<string | null>(null);
@@ -100,7 +102,7 @@ export function AudioViewer({ workflowState, projectId, onRefreshState }: AudioV
 
   if (!voiceovers || voiceovers.length === 0) {
     return (
-      <div className="h-full flex flex-col items-center justify-center p-8 text-center bg-[#FAF7F2]">
+      <div className={`h-full flex flex-col items-center justify-center p-8 text-center transition-colors duration-300 ${isDark ? 'bg-[#0E111A] text-slate-300' : 'bg-[#FAF7F2]'}`}>
         <div className="w-16 h-16 rounded-2xl bg-cyan-100 flex items-center justify-center text-cyan-600 mb-4 shadow-sm">
           <Volume2 className="w-8 h-8" />
         </div>
@@ -113,16 +115,16 @@ export function AudioViewer({ workflowState, projectId, onRefreshState }: AudioV
   }
 
   return (
-    <div className="h-full flex flex-col bg-white overflow-hidden">
+    <div className={`h-full flex flex-col overflow-hidden transition-colors duration-300 ${isDark ? 'bg-[#0E111A] text-slate-100' : 'bg-white text-stone-900'}`}>
       {/* Header Banner */}
-      <div className="flex flex-wrap justify-between items-center bg-stone-50 border-b border-stone-200 px-8 py-3.5 gap-4 flex-shrink-0">
+      <div className={`flex flex-wrap justify-between items-center border-b px-8 py-3.5 gap-4 flex-shrink-0 transition-colors ${isDark ? 'bg-[#0B0D15] border-white/10' : 'bg-stone-50 border-stone-200'}`}>
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 rounded-xl bg-cyan-500/10 flex items-center justify-center text-cyan-600">
             <Volume2 className="w-4 h-4" />
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="text-sm font-semibold text-stone-900">
+              <h2 className={`text-sm font-semibold ${isDark ? 'text-white' : 'text-stone-900'}`}>
                 Voiceover & Dialogue Tracks
               </h2>
               <span className="text-xs px-2 py-0.5 rounded-full bg-stone-200 text-stone-700 font-normal">
@@ -136,13 +138,13 @@ export function AudioViewer({ workflowState, projectId, onRefreshState }: AudioV
         </div>
 
         {/* Boy / Girl Filter Tabs */}
-        <div className="flex items-center bg-stone-200/70 p-1 rounded-xl text-xs font-medium">
+        <div className={`flex items-center p-1 rounded-xl text-xs font-medium ${isDark ? 'bg-white/10' : 'bg-stone-200/70'}`}>
           <button
             onClick={() => setGenderFilter('all')}
             className={`flex items-center gap-1.5 px-3 py-1 rounded-lg transition-all cursor-pointer ${
               genderFilter === 'all'
-                ? 'bg-white text-stone-900 shadow-xs font-semibold'
-                : 'text-stone-600 hover:text-stone-900'
+                ? isDark ? 'bg-[#141926] text-white shadow-xs font-semibold' : 'bg-white text-stone-900 shadow-xs font-semibold'
+                : isDark ? 'text-slate-400 hover:text-white' : 'text-stone-600 hover:text-stone-900'
             }`}
           >
             <Users className="w-3.5 h-3.5" />
@@ -199,7 +201,7 @@ export function AudioViewer({ workflowState, projectId, onRefreshState }: AudioV
       </div>
 
       {/* Voiceover List */}
-      <div className="flex-1 overflow-y-auto p-8 bg-[#FAF7F2]">
+      <div className={`flex-1 overflow-y-auto p-8 transition-colors duration-300 ${isDark ? 'bg-[#0A0D14]' : 'bg-[#FAF7F2]'}`}>
         <div className="max-w-4xl mx-auto space-y-4">
           {filteredVoiceovers.map((vo, idx) => {
             const char = charactersMap[vo.speaker.toLowerCase()];
@@ -211,13 +213,15 @@ export function AudioViewer({ workflowState, projectId, onRefreshState }: AudioV
             return (
               <div
                 key={vo.shot_id || idx}
-                className={`bg-white rounded-2xl border transition-all duration-200 p-5 shadow-sm hover:shadow-md ${
-                  isPlaying ? 'border-orange-400 ring-2 ring-orange-400/20' : 'border-stone-200/80'
+                className={`rounded-2xl border transition-all duration-200 p-5 shadow-sm hover:shadow-md ${
+                  isPlaying ? 'border-orange-400 ring-2 ring-orange-400/20' : isDark ? 'bg-[#121622] border-white/10' : 'bg-white border-stone-200/80'
                 }`}
               >
                 <div className="flex items-start gap-4">
                   {/* Character Thumbnail / Avatar */}
-                  <div className="relative w-14 h-14 rounded-xl overflow-hidden bg-stone-900 flex-shrink-0 border border-stone-200 shadow-xs">
+                  <div className={`relative w-14 h-14 rounded-xl overflow-hidden bg-stone-900 flex-shrink-0 shadow-xs border ${
+                    isDark ? 'border-white/10' : 'border-stone-200'
+                  }`}>
                     {char?.image_url ? (
                       <img src={char.image_url} alt={vo.speaker} className="w-full h-full object-cover" />
                     ) : (
@@ -233,7 +237,7 @@ export function AudioViewer({ workflowState, projectId, onRefreshState }: AudioV
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between gap-2 mb-1.5">
                       <div className="flex items-center gap-2">
-                        <h4 className="font-serif font-bold text-stone-900 text-base">{vo.speaker}</h4>
+                        <h4 className={`font-serif font-bold text-base ${isDark ? 'text-white' : 'text-stone-900'}`}>{vo.speaker}</h4>
                         
                         {/* Gender Classification Badge */}
                         <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${
@@ -245,7 +249,9 @@ export function AudioViewer({ workflowState, projectId, onRefreshState }: AudioV
                         </span>
 
                         {vo.voice_name && (
-                          <span className="text-[10px] font-medium bg-stone-100 text-stone-700 border border-stone-200 px-2 py-0.5 rounded-full">
+                          <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full border ${
+                            isDark ? 'bg-white/10 text-slate-300 border-white/10' : 'bg-stone-100 text-stone-700 border-stone-200'
+                          }`}>
                             {vo.voice_name}
                           </span>
                         )}
@@ -255,18 +261,24 @@ export function AudioViewer({ workflowState, projectId, onRefreshState }: AudioV
                       </span>
                     </div>
 
-                    <p className="text-stone-700 text-sm italic font-serif leading-relaxed mb-3">
+                    <p className={`text-sm italic font-serif leading-relaxed mb-3 ${
+                      isDark ? 'text-[#F5E6D3]' : 'text-[#5C3D24]'
+                    }`}>
                       "{vo.dialogue}"
                     </p>
 
                     {/* Audio Player Controls */}
-                    <div className="flex items-center gap-4 bg-[#FAF7F2] rounded-xl px-4 py-2 border border-stone-200/60">
+                    <div className={`flex items-center gap-4 rounded-xl px-4 py-2 border transition-colors ${
+                      isDark ? 'bg-black/40 border-white/10' : 'bg-[#FAF7F2] border-stone-200/60'
+                    }`}>
                       <button
                         onClick={() => togglePlay(vo.shot_id)}
                         className={`w-9 h-9 rounded-full flex items-center justify-center transition-all cursor-pointer ${
                           isPlaying
                             ? isFemale ? 'bg-purple-600 text-white shadow-md scale-105' : 'bg-blue-600 text-white shadow-md scale-105'
-                            : 'bg-white text-stone-800 hover:text-orange-600 shadow-xs border border-stone-200'
+                            : isDark 
+                              ? 'bg-white/10 text-white hover:text-orange-400 border border-white/10 shadow-xs' 
+                              : 'bg-white text-stone-800 hover:text-orange-600 shadow-xs border border-stone-200'
                         }`}
                       >
                         {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 ml-0.5" />}
@@ -280,7 +292,7 @@ export function AudioViewer({ workflowState, projectId, onRefreshState }: AudioV
                             className={`flex-1 rounded-full transition-all duration-300 ${
                               isPlaying
                                 ? isFemale ? 'bg-purple-500 animate-pulse' : 'bg-blue-500 animate-pulse'
-                                : 'bg-stone-300'
+                                : isDark ? 'bg-white/20' : 'bg-stone-300'
                             }`}
                             style={{
                               height: isPlaying ? `${Math.max(20, (h * (i % 2 === 0 ? 1 : 0.8)))}%` : '30%'

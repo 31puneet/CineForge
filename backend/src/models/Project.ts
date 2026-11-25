@@ -7,6 +7,16 @@ export interface IProjectSettings {
   targetDurationSeconds: number;
 }
 
+export interface IProjectMessage {
+  _id?: any;
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  attachments?: any[];
+  metadata?: any;
+  createdAt?: Date;
+  timestamp?: Date;
+}
+
 export interface IProject extends Document {
   _id: Types.ObjectId;
   userId: Types.ObjectId;
@@ -14,6 +24,7 @@ export interface IProject extends Document {
   status: ProjectStatus;
   settings: IProjectSettings;
   workflowState?: any;
+  messages?: IProjectMessage[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -47,7 +58,15 @@ const ProjectSchema = new Schema<IProject>({
   workflowState: {
     type: Schema.Types.Mixed,
     default: {}
-  }
+  },
+  messages: [{
+    role: { type: String, required: true },
+    content: { type: String, required: true },
+    attachments: { type: Array, default: [] },
+    metadata: { type: Schema.Types.Mixed, default: {} },
+    timestamp: { type: Date, default: Date.now },
+    createdAt: { type: Date, default: Date.now }
+  }]
 }, {
   timestamps: true,
   toJSON: {

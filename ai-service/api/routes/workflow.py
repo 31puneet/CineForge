@@ -439,6 +439,7 @@ async def regenerate_shot(req: RegenerateShotRequest):
     motion_prompt = f"{target_shot.get('speaker', '')}: {req.feedback or target_shot.get('prompt', '')}"
     raw_clip_out = os.path.join(renders_dir, f"{req.shot_id}_raw.mp4")
     final_clip_out = os.path.join(renders_dir, f"{req.shot_id}.mp4")
+    shot_dur = float(target_shot.get("duration_sec") or target_shot.get("duration_seconds") or settings.PROVIDER_CLIP_SECONDS)
 
     try:
         ai_clip = await asyncio.to_thread(
@@ -446,8 +447,8 @@ async def regenerate_shot(req: RegenerateShotRequest):
                 image_path=shot_img,
                 prompt=motion_prompt,
                 hf_token=settings.HUGGINGFACE_API_KEY,
-                duration=4.0,
-                steps=6
+                duration=shot_dur,
+                steps=4
             )
         )
         if ai_clip and os.path.exists(ai_clip):
@@ -457,29 +458,14 @@ async def regenerate_shot(req: RegenerateShotRequest):
             target_shot["status"] = "completed"
             target_shot["video_url"] = f"/renders/{req.project_id}/{req.shot_id}.mp4"
             target_shot["static_fallback"] = False
+            target_shot["duration_sec"] = shot_dur
+            target_shot["duration_seconds"] = shot_dur
             target_shot["error_message"] = None
         else:
             raise RuntimeError("Video generation produced no clip")
     except QuotaExceededError as qe:
-        if settings.ALLOW_STATIC_FALLBACK:
-            dur = float(target_shot.get("duration_sec") or 8.0)
-            frames = int(dur * settings.VIDEO_FPS)
-            vf = f"scale={settings.VIDEO_WIDTH}:{settings.VIDEO_HEIGHT}:force_original_aspect_ratio=increase,crop={settings.VIDEO_WIDTH}:{settings.VIDEO_HEIGHT},zoompan=z='min(zoom+0.0015,1.3)':d={frames}:s={settings.VIDEO_WIDTH}x{settings.VIDEO_HEIGHT}:fps={settings.VIDEO_FPS}"
-            import subprocess
-            subprocess.run([
-                FFMPEG_BIN, "-y", "-loop", "1", "-i", shot_img,
-                "-vf", vf, "-c:v", "libx264", "-preset", "fast",
-                "-t", str(dur), "-pix_fmt", "yuv420p", "-an", raw_clip_out
-            ], check=True)
-            import shutil
-            shutil.copyfile(raw_clip_out, final_clip_out)
-            target_shot["status"] = "completed"
-            target_shot["static_fallback"] = True
-            target_shot["video_url"] = f"/renders/{req.project_id}/{req.shot_id}.mp4"
-            target_shot["error_message"] = None
-        else:
-            target_shot["status"] = "failed_quota"
-            target_shot["error_message"] = str(qe)
+        target_shot["status"] = "failed_quota"
+        target_shot["error_message"] = str(qe)
     except Exception as e:
         target_shot["status"] = "failed"
         target_shot["error_message"] = str(e)

@@ -1,6 +1,7 @@
 import { useRef } from 'react';
 import { Folder, Search, ChevronRight, Upload, Loader2, Users, Volume2, Film } from 'lucide-react';
 import { useAssetUpload } from '../../hooks/useAssetUpload';
+import { useTheme } from '../../context/ThemeContext';
 
 import strings from '../../constants/strings.json';
 
@@ -36,6 +37,7 @@ export function ArtifactManager({
   videoCount = 0
 }: ArtifactManagerProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const { isDark } = useTheme();
   const { isUploading, error, uploadAsset } = useAssetUpload();
 
   const projectId = project?.id || project?._id;
@@ -54,11 +56,23 @@ export function ArtifactManager({
     }
   };
 
+  const folderBtnClass = `w-full flex items-center justify-between px-2 py-1.5 rounded-md transition-colors group text-sm font-medium cursor-pointer ${
+    isDark ? 'text-slate-200 hover:bg-white/5' : 'text-stone-800 hover:bg-[#F3ECE5]'
+  }`;
+  const folderBadgeClass = `text-[10px] px-1.5 py-0.5 rounded font-mono ${
+    isDark ? 'bg-white/10 text-slate-300' : 'bg-stone-300 text-stone-700'
+  }`;
+  const itemBtnClass = `text-left text-sm px-2 py-1 rounded transition-colors cursor-pointer ${
+    isDark ? 'text-slate-400 hover:text-orange-400 hover:bg-white/5' : 'text-stone-600 hover:text-orange-600 hover:bg-[#F3ECE5]'
+  }`;
+
   return (
-    <div className="w-80 border-r border-[#D9D3C7] bg-[#EFE9E1] flex flex-col p-4 flex-shrink-0 select-none">
+    <div className={`w-80 flex flex-col p-4 flex-shrink-0 select-none border-r transition-colors duration-300 ${
+      isDark ? 'border-white/10 bg-[#0C0F17]' : 'border-[#D9D3C7] bg-[#EFE9E1]'
+    }`}>
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
-        <h2 className="font-serif font-bold text-stone-900 text-lg tracking-wide">{strings.workspace.artifactManager.title}</h2>
+        <h2 className={`font-serif font-bold text-lg tracking-wide ${isDark ? 'text-white' : 'text-stone-900'}`}>{strings.workspace.artifactManager.title}</h2>
         <input 
           type="file" 
           ref={fileInputRef} 
@@ -68,7 +82,9 @@ export function ArtifactManager({
         <button 
           onClick={handleUploadClick}
           disabled={isUploading}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-[#FAF7F2] border border-[#D9D3C7] rounded-lg text-xs font-medium text-stone-800 hover:bg-white hover:border-stone-400 transition-colors shadow-2xs cursor-pointer disabled:opacity-50"
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors shadow-2xs cursor-pointer disabled:opacity-50 border ${
+            isDark ? 'bg-white/5 border-white/10 text-slate-200 hover:bg-white/10' : 'bg-[#FAF7F2] border-[#D9D3C7] text-stone-800 hover:bg-white hover:border-stone-400'
+          }`}
         >
           {isUploading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
           {isUploading ? strings.workspace.artifactManager.uploading : strings.workspace.artifactManager.upload}
@@ -87,7 +103,9 @@ export function ArtifactManager({
         <input 
           type="text" 
           placeholder={strings.workspace.artifactManager.searchPlaceholder} 
-          className="w-full pl-9 pr-3 py-1.5 bg-[#FAF7F2] border border-[#D9D3C7] rounded-lg text-sm text-stone-900 placeholder-stone-500 focus:outline-none focus:ring-1 focus:ring-orange-500 focus:border-orange-500"
+          className={`w-full pl-9 pr-3 py-1.5 rounded-lg text-sm placeholder-stone-500 focus:outline-none focus:ring-1 focus:ring-orange-500 border ${
+            isDark ? 'bg-[#121622] border-white/10 text-white placeholder-slate-500' : 'bg-[#FAF7F2] border-[#D9D3C7] text-stone-900 placeholder-stone-500'
+          }`}
         />
       </div>
 
@@ -98,7 +116,7 @@ export function ArtifactManager({
         <div className="mb-2">
           <button 
             onClick={hasScript ? onSelectScript : undefined}
-            className="w-full flex items-center justify-between px-2 py-1.5 text-stone-800 hover:bg-[#F3ECE5] rounded-md transition-colors group text-sm font-medium"
+            className={folderBtnClass}
           >
             <div className="flex items-center gap-2">
               <ChevronRight className={`w-4 h-4 text-stone-500 group-hover:text-stone-800 transition-transform ${hasScript ? 'rotate-90' : ''}`} />
@@ -106,7 +124,7 @@ export function ArtifactManager({
               {strings.workspace.artifactManager.folders.scripts}
             </div>
             {hasScript && (
-              <span className="text-[10px] bg-stone-300 text-stone-700 px-1.5 py-0.5 rounded font-mono">
+              <span className={folderBadgeClass}>
                 {workflowState?.script_version || 1}
               </span>
             )}
@@ -120,7 +138,7 @@ export function ArtifactManager({
                   <button 
                     key={v}
                     onClick={onSelectScript}
-                    className="text-left text-sm text-stone-600 hover:text-orange-600 hover:bg-[#F3ECE5] px-2 py-1 rounded transition-colors"
+                    className={itemBtnClass}
                   >
                     {strings.workspace.artifactNames.script.replace('{v}', v.toString())}
                   </button>
@@ -129,7 +147,7 @@ export function ArtifactManager({
             ) : hasScript ? (
               <button 
                 onClick={onSelectScript}
-                className="text-left text-sm text-stone-600 hover:text-orange-600 hover:bg-[#F3ECE5] px-2 py-1 rounded transition-colors"
+                className={itemBtnClass}
               >
                 v1_script.json
               </button>
@@ -141,7 +159,7 @@ export function ArtifactManager({
         <div className="mb-2">
           <button 
             onClick={hasCharacters ? onSelectCharacters : undefined}
-            className="w-full flex items-center justify-between px-2 py-1.5 text-stone-800 hover:bg-[#F3ECE5] rounded-md transition-colors group text-sm font-medium"
+            className={folderBtnClass}
           >
             <div className="flex items-center gap-2">
               <ChevronRight className={`w-4 h-4 text-stone-500 group-hover:text-stone-800 transition-transform ${hasCharacters ? 'rotate-90' : ''}`} />
@@ -149,7 +167,7 @@ export function ArtifactManager({
               {strings.workspace.artifactManager.folders.characters}
             </div>
             {characterCount > 0 && (
-              <span className="text-[10px] bg-stone-300 text-stone-700 px-1.5 py-0.5 rounded font-mono">{characterCount}</span>
+              <span className={folderBadgeClass}>{characterCount}</span>
             )}
           </button>
 
@@ -161,7 +179,7 @@ export function ArtifactManager({
                   <button 
                     key={v}
                     onClick={onSelectCharacters}
-                    className="text-left text-sm text-stone-600 hover:text-orange-600 hover:bg-[#F3ECE5] px-2 py-1 rounded transition-colors flex items-center gap-1.5"
+                    className={`${itemBtnClass} flex items-center gap-1.5`}
                   >
                     <Users className="w-3.5 h-3.5 text-orange-500" />
                     {strings.workspace.artifactNames.characters.replace('{v}', v.toString())}
@@ -171,7 +189,7 @@ export function ArtifactManager({
             ) : hasCharacters ? (
               <button 
                 onClick={onSelectCharacters}
-                className="text-left text-sm text-stone-600 hover:text-orange-600 hover:bg-[#F3ECE5] px-2 py-1 rounded transition-colors flex items-center gap-1.5"
+                className={`${itemBtnClass} flex items-center gap-1.5`}
               >
                 <Users className="w-3.5 h-3.5 text-orange-500" />
                 Character Cards ({characterCount})
@@ -184,7 +202,7 @@ export function ArtifactManager({
         <div className="mb-2">
           <button 
             onClick={hasAudio ? onSelectAudio : undefined}
-            className="w-full flex items-center justify-between px-2 py-1.5 text-stone-800 hover:bg-[#F3ECE5] rounded-md transition-colors group text-sm font-medium"
+            className={folderBtnClass}
           >
             <div className="flex items-center gap-2">
               <ChevronRight className={`w-4 h-4 text-stone-500 group-hover:text-stone-800 transition-transform ${hasAudio ? 'rotate-90' : ''}`} />
@@ -192,7 +210,7 @@ export function ArtifactManager({
               {strings.workspace.artifactManager.folders.audio}
             </div>
             {audioCount > 0 && (
-              <span className="text-[10px] bg-stone-300 text-stone-700 px-1.5 py-0.5 rounded font-mono">{audioCount}</span>
+              <span className={folderBadgeClass}>{audioCount}</span>
             )}
           </button>
 
@@ -200,7 +218,7 @@ export function ArtifactManager({
             <div className="pl-9 mt-1 flex flex-col gap-1">
               <button 
                 onClick={onSelectAudio}
-                className="text-left text-sm text-stone-600 hover:text-orange-600 hover:bg-[#F3ECE5] px-2 py-1 rounded transition-colors flex items-center gap-1.5"
+                className={`${itemBtnClass} flex items-center gap-1.5`}
               >
                 <Volume2 className="w-3.5 h-3.5 text-cyan-600" />
                 Dialogue Tracks ({audioCount})
@@ -213,7 +231,7 @@ export function ArtifactManager({
         <div className="mb-2">
           <button 
             onClick={hasVideo ? onSelectVideo : undefined}
-            className="w-full flex items-center justify-between px-2 py-1.5 text-stone-800 hover:bg-[#F3ECE5] rounded-md transition-colors group text-sm font-medium cursor-pointer"
+            className={folderBtnClass}
           >
             <div className="flex items-center gap-2">
               <ChevronRight className={`w-4 h-4 text-stone-500 group-hover:text-stone-800 transition-transform ${hasVideo ? 'rotate-90' : ''}`} />
@@ -221,7 +239,7 @@ export function ArtifactManager({
               {strings.workspace.artifactManager.folders.videoClips}
             </div>
             {videoCount > 0 && (
-              <span className="text-[10px] bg-stone-300 text-stone-700 px-1.5 py-0.5 rounded font-mono">{videoCount}</span>
+              <span className={folderBadgeClass}>{videoCount}</span>
             )}
           </button>
 
@@ -229,7 +247,7 @@ export function ArtifactManager({
             <div className="pl-9 mt-1 flex flex-col gap-1">
               <button 
                 onClick={onSelectVideo}
-                className="text-left text-sm text-stone-600 hover:text-orange-600 hover:bg-[#F3ECE5] px-2 py-1 rounded transition-colors flex items-center gap-1.5 cursor-pointer"
+                className={`${itemBtnClass} flex items-center gap-1.5`}
               >
                 <Film className="w-3.5 h-3.5 text-orange-600" />
                 Rendered Shots & Movie ({videoCount})
@@ -241,8 +259,8 @@ export function ArtifactManager({
       </div>
 
       {/* Info Footer */}
-      <div className="mt-4 pt-4 border-t border-[#D9D3C7]">
-        <p className="text-[10px] text-stone-500 text-center uppercase tracking-widest">
+      <div className={`mt-4 pt-4 border-t ${isDark ? 'border-white/10' : 'border-[#D9D3C7]'}`}>
+        <p className={`text-[10px] text-center uppercase tracking-widest ${isDark ? 'text-slate-500' : 'text-stone-500'}`}>
           {hasScript || hasCharacters || hasVideo ? `${(hasScript ? 1 : 0) + (characterCount > 0 ? characterCount : 0) + (videoCount > 0 ? videoCount : 0)} Generated Assets` : strings.workspace.artifactManager.noAssets}
         </p>
       </div>

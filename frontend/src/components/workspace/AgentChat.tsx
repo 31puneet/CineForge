@@ -5,6 +5,7 @@ import ReactMarkdown from 'react-markdown';
 import strings from '../../constants/strings.json';
 import apiClient from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
+import { useTheme } from '../../context/ThemeContext';
 import type { WorkflowEvent } from '../../types/events';
 import type { WorkflowState } from '../../hooks/useWorkflowState';
 
@@ -25,6 +26,7 @@ interface Message {
 
 export function AgentChat({ project, workflowState, onFetchState, onSwitchTab }: AgentChatProps) {
   const { user } = useAuth();
+  const { isDark } = useTheme();
   const projectId = project?.id || project?._id;
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
@@ -140,6 +142,36 @@ export function AgentChat({ project, workflowState, onFetchState, onSwitchTab }:
     if (!input.trim() || isLoading || !projectId) return;
     const text = input.trim();
     setInput('');
+
+    // If an approval stage is pending and the user responds via chat
+    const cleanLower = text.toLowerCase().trim();
+    const isAffirmative = ['yes', 'proceed', 'continue', 'next', 'approve', 'approved', 'looks good', 'ok', 'good', 'sure', 'advance'].includes(cleanLower);
+
+    if (isApprovalNeeded) {
+      if (isAffirmative) {
+        await handleRespondApproval(true);
+        return;
+      } else {
+        // User provided specific revision feedback in chat
+        const stageToRespond = effectiveApprovalStage || approvalStage;
+        setApprovalPending(false);
+        setShowReasonInput(false);
+        try {
+          await apiClient.post(`/projects/${projectId}/messages/respond`, {
+            approved: false,
+            reason: text,
+            stage: stageToRespond,
+            version: 1
+          });
+          if (onFetchState) await onFetchState();
+        } catch (err) {
+          console.error('Error submitting revision feedback via chat:', err);
+        }
+        await executeSendMessage(text);
+        return;
+      }
+    }
+
     await executeSendMessage(text);
   };
 
@@ -275,10 +307,10 @@ export function AgentChat({ project, workflowState, onFetchState, onSwitchTab }:
   };
 
   return (
-    <div className="h-full flex flex-col bg-[#FAF7F2]">
+    <div className={`h-full flex flex-col transition-colors duration-300 ${isDark ? 'bg-[#0A0D14]' : 'bg-[#FAF7F2]'}`}>
       {/* Tabs Header */}
-      <div className="flex border-b border-stone-200 bg-white">
-        <button className="px-6 py-4 text-sm font-medium border-b-2 border-orange-500 text-stone-900 flex items-center gap-2">
+      <div className={`flex border-b transition-colors duration-300 ${isDark ? 'border-white/10 bg-[#0B0D15]' : 'border-stone-200 bg-white'}`}>
+        <button className={`px-6 py-4 text-sm font-medium border-b-2 border-orange-500 flex items-center gap-2 ${isDark ? 'text-white' : 'text-stone-900'}`}>
           <img src="/cineforge-logo.jpg" alt="Agent" className="w-4 h-4 rounded-sm" />
           {strings.workspace.agentChat.tabTitle}
         </button>
@@ -287,7 +319,7 @@ export function AgentChat({ project, workflowState, onFetchState, onSwitchTab }:
       {/* Chat Messages Area */}
       <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-6">
         <div className="flex justify-center my-4">
-          <span className="px-3 py-1 bg-stone-100 text-stone-500 text-xs rounded-full border border-stone-200">
+          <span className={`px-3 py-1 text-xs rounded-full border ${isDark ? 'bg-white/5 text-slate-400 border-white/10' : 'bg-stone-100 text-stone-500 border-stone-200'}`}>
             {strings.workspace.agentChat.projectInitialized.replace('{title}', project?.title || '')}
           </span>
         </div>
@@ -297,7 +329,9 @@ export function AgentChat({ project, workflowState, onFetchState, onSwitchTab }:
             <div className="w-8 h-8 rounded-full bg-orange-100 flex items-center justify-center shrink-0 overflow-hidden">
               <img src="/cineforge-logo.jpg" alt="Agent" className="w-full h-full object-cover" />
             </div>
-            <div className="bg-white border border-stone-200 rounded-2xl rounded-tl-none p-4 max-w-[80%] shadow-sm text-stone-800 text-sm leading-relaxed whitespace-pre-wrap">
+            <div className={`rounded-2xl rounded-tl-none p-4 max-w-[80%] shadow-sm text-sm leading-relaxed whitespace-pre-wrap ${
+              isDark ? 'bg-[#121622] border border-white/10 text-slate-200' : 'bg-white border border-stone-200 text-stone-800'
+            }`}>
               {strings.workspace.agentChat.welcomeMessage}
             </div>
           </div>
@@ -332,9 +366,9 @@ export function AgentChat({ project, workflowState, onFetchState, onSwitchTab }:
               <div className={`p-4 max-w-[100%] shadow-sm text-sm leading-relaxed whitespace-pre-wrap flex flex-col gap-2
                 ${msg.role === 'user' 
                   ? 'bg-orange-500 text-white rounded-2xl rounded-tr-none' 
-                  : 'bg-white border border-stone-200 text-stone-800 rounded-2xl rounded-tl-none'}`}
+                  : isDark ? 'bg-[#121622] border border-white/10 text-slate-200 rounded-2xl rounded-tl-none' : 'bg-white border border-stone-200 text-stone-800 rounded-2xl rounded-tl-none'}`}
               >
-                <div className="prose prose-sm prose-stone max-w-none">
+                <div className={`prose prose-sm ${isDark ? 'prose-invert text-slate-200' : 'prose-stone text-stone-800'} max-w-none`}>
                   {msg.role === 'user' ? (
                     msg.content
                   ) : (
@@ -345,7 +379,9 @@ export function AgentChat({ project, workflowState, onFetchState, onSwitchTab }:
                 {msg.metadata?.link && (
                   <button 
                     onClick={() => onSwitchTab?.(msg.metadata.link.target || 'script')}
-                    className="flex items-center gap-2 mt-2 px-3 py-2 bg-stone-50 border border-stone-200 rounded-lg text-stone-700 hover:bg-orange-50 transition-colors w-max"
+                    className={`flex items-center gap-2 mt-2 px-3 py-2 rounded-lg transition-colors w-max text-xs font-medium ${
+                      isDark ? 'bg-white/5 border border-white/10 text-slate-200 hover:bg-white/10' : 'bg-stone-50 border border-stone-200 text-stone-700 hover:bg-orange-50'
+                    }`}
                   >
                     <FileText className="w-4 h-4 text-orange-500" />
                     <span className="font-medium text-xs">{msg.metadata.link.label}</span>
@@ -370,11 +406,15 @@ export function AgentChat({ project, workflowState, onFetchState, onSwitchTab }:
             <div className="w-8 h-8 rounded-full bg-orange-100 flex items-center justify-center shrink-0 overflow-hidden">
               <img src="/cineforge-logo.jpg" alt="Agent" className="w-full h-full object-cover" />
             </div>
-            <div className="bg-white border border-stone-200 rounded-2xl rounded-tl-none p-3 shadow-sm text-sm text-stone-800 min-w-[300px]">
+            <div className={`rounded-2xl rounded-tl-none p-3 shadow-sm text-sm min-w-[300px] ${
+              isDark ? 'bg-[#121622] border border-white/10 text-slate-200' : 'bg-white border border-stone-200 text-stone-800'
+            }`}>
               
               <button 
                 onClick={() => setThinkingExpanded(!thinkingExpanded)}
-                className="flex items-center gap-2 w-full text-left font-medium text-stone-700 pb-2 border-b border-stone-100 hover:text-orange-600 transition-colors"
+                className={`flex items-center gap-2 w-full text-left font-medium pb-2 border-b transition-colors ${
+                  isDark ? 'text-slate-300 border-white/10 hover:text-orange-400' : 'text-stone-700 border-stone-100 hover:text-orange-600'
+                }`}
               >
                 {thinkingExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
                 <span className="flex items-center gap-2">
@@ -396,14 +436,16 @@ export function AgentChat({ project, workflowState, onFetchState, onSwitchTab }:
 
                   {/* Real Thinking Content */}
                   {thinkingContent && (
-                    <div className="pl-4 border-l-2 border-stone-200 mt-2 text-xs text-stone-500 whitespace-pre-wrap font-mono prose prose-sm prose-stone">
+                    <div className={`pl-4 border-l-2 mt-2 text-xs whitespace-pre-wrap font-mono prose prose-sm ${
+                      isDark ? 'border-white/20 text-slate-400 prose-invert' : 'border-stone-200 text-stone-500 prose-stone'
+                    }`}>
                       <ReactMarkdown>{thinkingContent}</ReactMarkdown>
                     </div>
                   )}
 
                   {/* Plan Checklist */}
                   {planSteps.length > 0 && (
-                    <div className="bg-stone-50 rounded-lg p-3 border border-stone-100 ml-4">
+                    <div className={`rounded-lg p-3 ml-4 border ${isDark ? 'bg-white/5 border-white/10' : 'bg-stone-50 border-stone-100'}`}>
                       <div className="text-xs font-semibold text-stone-600 mb-2">Workflow Plan:</div>
                       <div className="flex flex-col gap-2">
                         {planSteps.map((step, idx) => {
@@ -446,9 +488,9 @@ export function AgentChat({ project, workflowState, onFetchState, onSwitchTab }:
                 const msg = errorMessage || '';
                 if (!msg) return 'An error occurred while communicating with the agent. Please try again.';
                 if (msg.includes('503') || msg.toLowerCase().includes('high demand') || msg.toLowerCase().includes('unavailable')) {
-                  return 'The AI service is temporarily experiencing high demand from Google. Please try again in a few moments.';
+                  return 'The AI service is temporarily experiencing high demand. Please try again in a few moments.';
                 }
-                if (msg.includes('429') || msg.toLowerCase().includes('quota') || msg.toLowerCase().includes('resource_exhausted')) {
+                if ((msg.includes('429') || msg.toLowerCase().includes('resource_exhausted')) && !msg.toLowerCase().includes('zerogpu')) {
                   return 'Rate limit reached. Please wait a few moments and try again.';
                 }
                 return msg;
@@ -461,8 +503,10 @@ export function AgentChat({ project, workflowState, onFetchState, onSwitchTab }:
         {isApprovalNeeded && (
           <div className="flex gap-4">
             <div className="w-8 h-8 opacity-0"></div>
-            <div className="bg-white border border-orange-200 rounded-2xl p-4 shadow-sm min-w-[300px]">
-              <div className="text-sm font-medium text-stone-800 mb-3">
+            <div className={`rounded-2xl p-4 shadow-sm min-w-[300px] border ${
+              isDark ? 'bg-[#121622] border-orange-500/30' : 'bg-white border-orange-200'
+            }`}>
+              <div className={`text-sm font-medium mb-3 ${isDark ? 'text-slate-200' : 'text-stone-800'}`}>
                 Does this {effectiveApprovalStage === 'character' ? 'character cast' : effectiveApprovalStage === 'voiceover' ? 'voiceover line-up' : effectiveApprovalStage === 'video' ? 'video shot line-up' : effectiveApprovalStage || 'step'} look good to you?
               </div>
               
@@ -475,7 +519,9 @@ export function AgentChat({ project, workflowState, onFetchState, onSwitchTab }:
                 </button>
                 <button 
                   onClick={() => handleRespondApproval(false)}
-                  className="flex-1 py-2 bg-stone-100 hover:bg-stone-200 text-stone-700 border border-stone-200 rounded-lg text-sm font-medium transition-colors cursor-pointer"
+                  className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer border ${
+                    isDark ? 'bg-white/10 hover:bg-white/15 text-slate-200 border-white/10' : 'bg-stone-100 hover:bg-stone-200 text-stone-700 border-stone-200'
+                  }`}
                 >
                   No, revise
                 </button>
@@ -487,7 +533,9 @@ export function AgentChat({ project, workflowState, onFetchState, onSwitchTab }:
                     placeholder="What should I change?"
                     value={rejectionReason}
                     onChange={(e) => setRejectionReason(e.target.value)}
-                    className="w-full p-3 bg-stone-50 border border-stone-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 resize-none h-24"
+                    className={`w-full p-3 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 resize-none h-24 border ${
+                      isDark ? 'bg-[#0E111A] border-white/10 text-slate-100 placeholder-slate-500' : 'bg-stone-50 border-stone-200 text-stone-900 placeholder-stone-400'
+                    }`}
                   />
                   <button 
                     onClick={() => handleRespondApproval(false)}
@@ -506,7 +554,7 @@ export function AgentChat({ project, workflowState, onFetchState, onSwitchTab }:
       </div>
 
       {/* Input Area */}
-      <div className="p-4 bg-white border-t border-stone-200">
+      <div className={`p-4 border-t transition-colors duration-300 ${isDark ? 'bg-[#0B0D15] border-white/10' : 'bg-white border-stone-200'}`}>
         {attachments.length > 0 && (
           <div className="flex flex-wrap gap-2 mb-2 max-w-4xl mx-auto">
             {attachments.map((att, idx) => (
@@ -531,7 +579,7 @@ export function AgentChat({ project, workflowState, onFetchState, onSwitchTab }:
           <button 
             type="button" 
             onClick={() => fileInputRef.current?.click()}
-            disabled={isLoading || approvalPending}
+            disabled={isLoading}
             className="absolute left-3 top-1/2 -translate-y-1/2 p-2 text-stone-400 hover:text-stone-700 disabled:opacity-50 transition-colors"
             title="Attach file"
           >
@@ -542,15 +590,19 @@ export function AgentChat({ project, workflowState, onFetchState, onSwitchTab }:
             value={input}
             onChange={(e) => setInput(e.target.value)}
             disabled={isLoading}
-            placeholder={isLoading ? "Agent is working..." : (typeof isApprovalNeeded !== 'undefined' && isApprovalNeeded) || (typeof approvalPending !== 'undefined' && approvalPending) ? "Please approve or reject above..." : strings.workspace.agentChat.inputPlaceholder}
-            className="w-full pl-12 pr-32 py-4 bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 transition-all shadow-inner disabled:opacity-50" 
+            placeholder={isLoading ? "Agent is working..." : isApprovalNeeded ? "Type feedback, instructions, or approve above..." : strings.workspace.agentChat.inputPlaceholder}
+            className={`w-full pl-12 pr-32 py-4 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 transition-all shadow-inner disabled:opacity-50 border ${
+              isDark ? 'bg-[#121622] border-white/10 text-white placeholder-slate-500' : 'bg-stone-50 border-stone-200 text-stone-900 placeholder-stone-400'
+            }`} 
           />
           <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-2">
             <select
               value={selectedDuration}
               onChange={(e) => setSelectedDuration(e.target.value)}
               disabled={isLoading}
-              className="bg-transparent text-stone-500 text-xs font-medium cursor-pointer focus:outline-none hover:text-stone-800 transition-colors"
+              className={`bg-transparent text-xs font-medium cursor-pointer focus:outline-none transition-colors ${
+                isDark ? 'text-slate-400 hover:text-white' : 'text-stone-500 hover:text-stone-800'
+              }`}
               title="Target Duration"
             >
               <option value="10">10s</option>
@@ -561,8 +613,10 @@ export function AgentChat({ project, workflowState, onFetchState, onSwitchTab }:
             </select>
             <button 
               type="submit" 
-              disabled={!input.trim() || isLoading || approvalPending}
-              className="p-2 bg-stone-900 text-white rounded-lg hover:bg-orange-600 disabled:opacity-50 disabled:hover:bg-stone-900 transition-colors"
+              disabled={!input.trim() || isLoading}
+              className={`p-2 rounded-lg transition-colors cursor-pointer disabled:opacity-50 ${
+                isDark ? 'bg-orange-500 text-white hover:bg-orange-600 disabled:hover:bg-orange-500' : 'bg-stone-900 text-white hover:bg-orange-600 disabled:hover:bg-stone-900'
+              }`}
             >
               {(isLoading) ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
             </button>

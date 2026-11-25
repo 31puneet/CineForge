@@ -15,7 +15,89 @@ export const getMessages = async (req: Request, res: Response): Promise<void> =>
       return;
     }
 
-    res.json(project.messages || []);
+    let messages = project.messages || [];
+
+    // If no messages stored yet or missing assistant responses, reconstruct conversation from AI workflow state
+    if (messages.length === 0) {
+      const aiServiceUrl = process.env.AI_SERVICE_URL || 'http://localhost:8000';
+      try {
+        const response = await fetch(`${aiServiceUrl}/api/workflow/state/${projectId as string}`);
+        if (response.ok) {
+          const liveState = await response.json();
+          const reconstructed: any[] = [];
+
+          // Reconstruct user prompt
+          if (liveState.messages && Array.isArray(liveState.messages)) {
+            for (const m of liveState.messages) {
+              if (m.role === 'user' && m.content) {
+                const textContent = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+                if (!reconstructed.some(existing => existing.content === textContent)) {
+                  reconstructed.push({
+                    role: 'user',
+                    content: textContent,
+                    timestamp: new Date()
+                  });
+                }
+              }
+            }
+          }
+
+          // If script is present, add the script assistant message
+          if (liveState.script_data) {
+            reconstructed.push({
+              role: 'assistant',
+              content: `I have generated the movie script (v${liveState.script_version || 1}). Take a look here:`,
+              metadata: { link: { label: `v${liveState.script_version || 1}_script.json`, target: 'script_tab' } },
+              timestamp: new Date()
+            });
+            if (liveState.approval_states?.script_approved) {
+              reconstructed.push({
+                role: 'assistant',
+                content: '✅ Script approved! Ready for Character Design.',
+                timestamp: new Date()
+              });
+            }
+          }
+
+          // If characters are present, add the character assistant message
+          if (liveState.characters && liveState.characters.length > 0) {
+            reconstructed.push({
+              role: 'assistant',
+              content: `I have designed the characters (${liveState.characters.length} characters). Take a look here:`,
+              metadata: { link: { label: `Character Cards (${liveState.characters.length})`, target: 'characters_tab' } },
+              timestamp: new Date()
+            });
+            if (liveState.approval_states?.characters_approved) {
+              reconstructed.push({
+                role: 'assistant',
+                content: '✅ Characters approved! Proceeding to Voiceover & Video generation.',
+                timestamp: new Date()
+              });
+            }
+          }
+
+          // If voiceovers are present
+          if (liveState.voiceovers && liveState.voiceovers.length > 0) {
+            reconstructed.push({
+              role: 'assistant',
+              content: `I've generated studio voiceovers for all ${liveState.voiceovers.length} dialogue lines. Take a listen in the Audio tab:`,
+              metadata: { link: { label: `Audio Tracks (${liveState.voiceovers.length})`, target: 'audio_tab' } },
+              timestamp: new Date()
+            });
+          }
+
+          if (reconstructed.length > 0) {
+            project.messages = reconstructed;
+            await project.save();
+            messages = reconstructed;
+          }
+        }
+      } catch (err) {
+        console.error('Failed to reconstruct messages from AI state:', err);
+      }
+    }
+
+    res.json(messages);
   } catch (error) {
     console.error('Error fetching messages:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -45,11 +127,9 @@ export const sendMessage = async (req: Request, res: Response): Promise<void> =>
     project.messages.push(userMessage);
     await project.save();
 
-    // Start background agent execution via AI service
+    // Call AI Service /start
     const aiServiceUrl = process.env.AI_SERVICE_URL || 'http://localhost:8000';
-    
-    // Call AI Service /start asynchronously
-    fetch(`${aiServiceUrl}/api/workflow/start`, {
+    const aiResponse = await fetch(`${aiServiceUrl}/api/workflow/start`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -57,13 +137,48 @@ export const sendMessage = async (req: Request, res: Response): Promise<void> =>
         user_prompt: content,
         metadata: {
           title: project.title,
-          targetDurationSeconds: project.targetDurationSeconds,
-          aspectRatio: project.aspectRatio,
-          genre: project.genre,
+          targetDurationSeconds: project.settings?.targetDurationSeconds || 60,
+          aspectRatio: project.settings?.aspectRatio || '16:9',
           attachments: attachments || []
         }
       })
-    }).catch(err => console.error('Error triggering AI workflow:', err));
+    });
+
+    if (aiResponse.ok && aiResponse.body) {
+      res.setHeader('Content-Type', 'application/x-ndjson');
+      res.setHeader('Transfer-Encoding', 'chunked');
+
+      const reader = aiResponse.body.getReader();
+      const decoder = new TextDecoder();
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        res.write(value);
+
+        // Parse message events to persist assistant messages in MongoDB
+        try {
+          const textChunk = decoder.decode(value, { stream: true });
+          const lines = textChunk.split('\n').filter(l => l.trim().length > 0);
+          for (const line of lines) {
+            try {
+              const parsed = JSON.parse(line);
+              if (parsed.type === 'message' && parsed.content) {
+                project.messages.push({
+                  role: 'assistant',
+                  content: parsed.content,
+                  metadata: parsed.link ? { link: parsed.link } : {},
+                  timestamp: new Date()
+                });
+                await project.save();
+              }
+            } catch {}
+          }
+        } catch {}
+      }
+      res.end();
+      return;
+    }
 
     res.status(201).json(userMessage);
   } catch (error) {
@@ -83,6 +198,15 @@ export const respondToApproval = async (req: Request, res: Response): Promise<vo
       res.status(404).json({ error: 'Project not found' });
       return;
     }
+
+    // Persist approval action in project messages
+    project.messages = project.messages || [];
+    project.messages.push({
+      role: 'user',
+      content: approved ? 'Yes, proceed' : (reason ? `Revise: ${reason}` : 'No, revise'),
+      timestamp: new Date()
+    });
+    await project.save();
 
     const aiServiceUrl = process.env.AI_SERVICE_URL || 'http://localhost:8000';
     const response = await fetch(`${aiServiceUrl}/api/workflow/respond`, {

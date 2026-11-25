@@ -81,6 +81,8 @@ def _run(args: list[str], timeout: Optional[int] = None) -> subprocess.Completed
             check=True,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout or settings.FFMPEG_TIMEOUT_SEC,
         )
     except subprocess.CalledProcessError as exc:
@@ -103,7 +105,12 @@ def probe(path: Path | str) -> MediaInfo:
         FFPROBE_BIN, "-v", "error", "-print_format", "json",
         "-show_format", "-show_streams", path_str
     ], timeout=60)
-    data = json.loads(out.stdout)
+    stdout_text = out.stdout if (out and out.stdout) else "{}"
+    try:
+        data = json.loads(stdout_text)
+    except Exception as e:
+        logger.warning(f"Failed to parse ffprobe json output: {e}")
+        data = {}
     streams = data.get("streams", [])
     video = next((s for s in streams if s.get("codec_type") == "video"), None)
     audio = next((s for s in streams if s.get("codec_type") == "audio"), None)
@@ -713,7 +720,7 @@ def build_audio_track(
             "-af", f"loudnorm=I={settings.TARGET_LUFS}:TP={settings.TARGET_TRUE_PEAK}:LRA=11:print_format=json",
             "-f", "null", "-"
         ]
-        p1 = subprocess.run(pass1_cmd, capture_output=True, text=True, timeout=settings.FFMPEG_TIMEOUT_SEC)
+        p1 = subprocess.run(pass1_cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=settings.FFMPEG_TIMEOUT_SEC)
         json_match = re.search(r"\{[\s\S]*?\"input_i\"[\s\S]*?\}", p1.stderr)
         if json_match:
             stats = json.loads(json_match.group(0))
@@ -866,7 +873,7 @@ def verify_film(master_path: Path | str) -> dict:
         FFMPEG_BIN, "-hide_banner", "-i", m_path,
         "-af", "ebur128=peak=true", "-f", "null", "-"
     ]
-    ebur_proc = subprocess.run(ebur_cmd, capture_output=True, text=True, timeout=60)
+    ebur_proc = subprocess.run(ebur_cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
     ebur_output = ebur_proc.stderr
     import re
     i_match = re.search(r"Integrated loudness:\s+I:\s+([-\d\.]+)\s+LUFS", ebur_output)
@@ -910,7 +917,7 @@ def verify_film(master_path: Path | str) -> dict:
         FFMPEG_BIN, "-hide_banner", "-i", m_path,
         "-vf", "freezedetect=n=-60dB:d=1.5", "-an", "-f", "null", "-"
     ]
-    freeze_proc = subprocess.run(freeze_cmd, capture_output=True, text=True, timeout=60)
+    freeze_proc = subprocess.run(freeze_cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
     freezes = re.findall(r"freeze_start:\s+([-\d\.]+)", freeze_proc.stderr)
     results["checks"]["freezes"] = {
         "passed": len(freezes) == 0,

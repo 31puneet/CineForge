@@ -1,5 +1,6 @@
 import { useState, useRef } from 'react';
 import type { WorkflowState, VideoShot } from '../../hooks/useWorkflowState';
+import { useTheme } from '../../context/ThemeContext';
 import { Film, Play, CheckCircle2, Download, Clapperboard } from 'lucide-react';
 import apiClient from '../../api/client';
 
@@ -10,6 +11,7 @@ interface VideoViewerProps {
 }
 
 export function VideoViewer({ workflowState, projectId, onRefreshState }: VideoViewerProps) {
+  const { isDark } = useTheme();
   // Built-in fallback shots for active project
   const defaultShots: VideoShot[] = projectId ? [
     { shot_id: 'shot_1', video_url: `/renders/${projectId}/shot_1.mp4`, thumbnail_url: '/solaris.jpg', speaker: 'Solaris', dialogue: 'The dimensional breach is expanding! Assemble at the citadel!', duration_seconds: 10.0 },
@@ -67,11 +69,13 @@ export function VideoViewer({ workflowState, projectId, onRefreshState }: VideoV
 
   if (!videoShots || videoShots.length === 0) {
     return (
-      <div className="h-full flex flex-col items-center justify-center p-8 text-center bg-[#FAF7F2]">
+      <div className={`h-full flex flex-col items-center justify-center p-8 text-center transition-colors duration-300 ${
+        isDark ? 'bg-[#08090D] text-slate-300' : 'bg-[#FAF7F2] text-stone-800'
+      }`}>
         <div className="w-16 h-16 rounded-2xl bg-amber-100 flex items-center justify-center text-amber-600 mb-4 shadow-sm">
           <Film className="w-8 h-8" />
         </div>
-        <h3 className="text-lg font-serif font-bold text-stone-800 mb-2">No Video Shots Rendered Yet</h3>
+        <h3 className={`text-lg font-serif font-bold mb-2 ${isDark ? 'text-white' : 'text-stone-800'}`}>No Video Shots Rendered Yet</h3>
         <p className="text-stone-500 text-sm max-w-sm leading-relaxed mb-6">
           Once dialogue tracks and character concepts are ready, the Video Agent renders cinematic camera shots and stitches the final film.
         </p>
@@ -82,16 +86,16 @@ export function VideoViewer({ workflowState, projectId, onRefreshState }: VideoV
   const activeVideoSrc = activeViewMode === 'film' && finalVideoUrl ? finalVideoUrl : (currentSelectedShot?.video_url || finalVideoUrl);
 
   return (
-    <div className="h-full flex flex-col bg-white overflow-hidden">
+    <div className={`h-full flex flex-col overflow-hidden transition-colors duration-300 ${isDark ? 'bg-[#0E111A] text-slate-100' : 'bg-white text-stone-900'}`}>
       {/* Header Banner */}
-      <div className="flex flex-wrap justify-between items-center bg-stone-50 border-b border-stone-200 px-8 py-3.5 gap-4 flex-shrink-0">
+      <div className={`flex flex-wrap justify-between items-center border-b px-8 py-3.5 gap-4 flex-shrink-0 transition-colors ${isDark ? 'bg-[#0B0D15] border-white/10' : 'bg-stone-50 border-stone-200'}`}>
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 rounded-xl bg-orange-500/10 flex items-center justify-center text-orange-600">
             <Film className="w-4 h-4" />
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="text-sm font-semibold text-stone-900">
+              <h2 className={`text-sm font-semibold ${isDark ? 'text-white' : 'text-stone-900'}`}>
                 Cinematic Video Output
               </h2>
               <span className="text-xs px-2 py-0.5 rounded-full bg-stone-200 text-stone-700 font-normal">
@@ -105,7 +109,7 @@ export function VideoViewer({ workflowState, projectId, onRefreshState }: VideoV
         </div>
 
         {/* View Mode Switcher */}
-        <div className="flex items-center bg-stone-200/70 p-1 rounded-xl text-xs font-medium">
+        <div className={`flex items-center p-1 rounded-xl text-xs font-medium ${isDark ? 'bg-white/10' : 'bg-stone-200/70'}`}>
           <button
             onClick={() => {
               setActiveViewMode('film');
@@ -167,11 +171,15 @@ export function VideoViewer({ workflowState, projectId, onRefreshState }: VideoV
       </div>
 
       {/* Main Workspace */}
-      <div className="flex-1 flex flex-col lg:flex-row overflow-hidden bg-[#FAF7F2]">
+      <div className={`flex-1 flex flex-col lg:flex-row overflow-hidden transition-colors duration-300 ${
+        isDark ? 'bg-[#08090D]' : 'bg-[#FAF7F2]'
+      }`}>
         
         {/* Left: Master Video Stage */}
         <div className="flex-1 flex flex-col p-6 items-center justify-center overflow-y-auto">
-          <div className="w-full max-w-4xl bg-stone-900 rounded-2xl overflow-hidden shadow-xl border border-stone-800 flex flex-col">
+          <div className={`w-full max-w-4xl rounded-2xl overflow-hidden shadow-2xl flex flex-col border ${
+            isDark ? 'bg-[#0E111A] border-white/10 shadow-black/60' : 'bg-stone-900 border-stone-800'
+          }`}>
             {/* Player Container */}
             <div className="relative aspect-video w-full bg-black flex items-center justify-center group">
               <video
@@ -192,7 +200,9 @@ export function VideoViewer({ workflowState, projectId, onRefreshState }: VideoV
                 <h3 className="font-serif font-bold text-white text-base">
                   {activeViewMode === 'film' ? 'Master Assembled Film (Complete 1-Minute Cut)' : `${currentSelectedShot?.shot_id.toUpperCase()} — ${currentSelectedShot?.speaker}`}
                 </h3>
-                <p className="text-xs text-stone-400 mt-0.5 line-clamp-1 italic">
+                <p className={`text-xs mt-0.5 line-clamp-1 italic ${
+                  isDark ? 'text-[#F5E6D3]' : 'text-stone-300'
+                }`}>
                   {activeViewMode === 'film' 
                     ? 'All shots stitched with synchronized character dialogue and 24fps CFR motion.' 
                     : `"${currentSelectedShot?.dialogue}"`}
@@ -208,9 +218,15 @@ export function VideoViewer({ workflowState, projectId, onRefreshState }: VideoV
         </div>
 
         {/* Right: Shots Reel Gallery */}
-        <div className="w-full lg:w-96 border-t lg:border-t-0 lg:border-l border-stone-200 bg-white flex flex-col h-full overflow-hidden">
-          <div className="p-4 border-b border-stone-200 bg-stone-50 flex items-center justify-between">
-            <h3 className="font-semibold text-xs text-stone-900 uppercase tracking-wider flex items-center gap-1.5">
+        <div className={`w-full lg:w-96 border-t lg:border-t-0 lg:border-l flex flex-col h-full overflow-hidden transition-colors ${
+          isDark ? 'border-white/10 bg-[#0C0F17]' : 'border-stone-200 bg-white'
+        }`}>
+          <div className={`p-4 border-b flex items-center justify-between transition-colors ${
+            isDark ? 'border-white/10 bg-[#0B0D15]' : 'border-stone-200 bg-stone-50'
+          }`}>
+            <h3 className={`font-semibold text-xs uppercase tracking-wider flex items-center gap-1.5 ${
+              isDark ? 'text-white' : 'text-stone-900'
+            }`}>
               <Clapperboard className="w-3.5 h-3.5 text-orange-500" />
               Shot Timeline ({videoShots.length})
             </h3>
@@ -237,9 +253,11 @@ export function VideoViewer({ workflowState, projectId, onRefreshState }: VideoV
                   }}
                   className={`p-3 rounded-xl border transition-all cursor-pointer ${
                     hasProblem
-                      ? 'bg-red-50/60 border-red-300 ring-1 ring-red-400/30'
+                      ? isDark ? 'bg-red-950/40 border-red-500/50 ring-1 ring-red-500/30' : 'bg-red-50/60 border-red-300 ring-1 ring-red-400/30'
                       : isSelected
-                      ? 'bg-orange-50/60 border-orange-400 ring-2 ring-orange-400/20 shadow-xs'
+                      ? isDark ? 'bg-orange-500/15 border-orange-500 ring-2 ring-orange-500/30 shadow-xs' : 'bg-orange-50/60 border-orange-400 ring-2 ring-orange-400/20 shadow-xs'
+                      : isDark
+                      ? 'bg-[#121622] border-white/10 hover:border-orange-500/40 text-slate-200'
                       : 'bg-stone-50/50 border-stone-200/80 hover:bg-stone-50 hover:border-stone-300'
                   }`}
                 >
@@ -267,11 +285,13 @@ export function VideoViewer({ workflowState, projectId, onRefreshState }: VideoV
                         <span className="font-mono text-[10px] uppercase font-bold text-stone-400">
                           Shot {idx + 1}
                         </span>
-                        <span className="text-[11px] font-semibold text-stone-800">
+                        <span className={`text-[11px] font-semibold ${isDark ? 'text-white' : 'text-stone-800'}`}>
                           {shot.speaker}
                         </span>
                       </div>
-                      <p className="text-[11px] text-stone-600 line-clamp-2 italic font-serif leading-tight mb-1.5">
+                      <p className={`text-[11px] line-clamp-2 italic font-serif leading-tight mb-1.5 ${
+                        isDark ? 'text-[#F5E6D3]' : 'text-[#5C3D24]'
+                      }`}>
                         "{shot.dialogue}"
                       </p>
 

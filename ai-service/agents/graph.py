@@ -287,7 +287,10 @@ For each character, provide:
         state["character_version"] = version
         char_list = script_data_dict.get("characters", []) if script_data_dict else []
 
-        # Generate character concept portraits
+        # Generate character concept portraits and persist locally
+        renders_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "public", "renders", state.get("project_id", "")))
+        os.makedirs(renders_dir, exist_ok=True)
+
         for idx, char in enumerate(char_list):
             char_id = char.get("character_id") or char.get("id") or f"char_{idx+1}"
             char["id"] = char_id
@@ -296,9 +299,30 @@ For each character, provide:
             if prompt_text:
                 try:
                     seed = abs(hash(f"{state.get('project_id', '')}_{char_id}")) % 1000000
-                    img_url = await image_adapter.generate_image(prompt_text, seed=seed, aspect_ratio="1:1")
-                    if img_url:
-                        char["image_url"] = img_url
+                    img_data = await image_adapter.generate_image(prompt_text, seed=seed, aspect_ratio="1:1")
+                    if img_data:
+                        char_file = os.path.join(renders_dir, f"{char_id}.jpg")
+                        if img_data.startswith("data:image") and "base64," in img_data:
+                            b64_str = img_data.split("base64,", 1)[1]
+                            raw_b = base64.b64decode(b64_str)
+                            if len(raw_b) > 1000:
+                                with open(char_file, "wb") as f_out:
+                                    f_out.write(raw_b)
+                                char["image_url"] = f"/renders/{state.get('project_id')}/{char_id}.jpg"
+                            else:
+                                char["image_url"] = img_data
+                        elif img_data.startswith("http"):
+                            headers = {"Authorization": f"Bearer {settings.POLLINATIONS_API_KEY}"} if settings.POLLINATIONS_API_KEY else {}
+                            async with httpx.AsyncClient(timeout=60.0) as client:
+                                r = await client.get(img_data, headers=headers)
+                                if r.status_code == 200 and len(r.content) > 1000:
+                                    with open(char_file, "wb") as f_out:
+                                        f_out.write(r.content)
+                                    char["image_url"] = f"/renders/{state.get('project_id')}/{char_id}.jpg"
+                                else:
+                                    char["image_url"] = img_data
+                        else:
+                            char["image_url"] = img_data
                 except Exception as img_err:
                     print(f"[Character Agent] Image gen failed for {char_id}: {img_err}")
 
@@ -428,6 +452,20 @@ async def voiceover_agent_node(state: FilmGraphState, config: RunnableConfig):
                 rate=voice_config["rate"]
             )
 
+            # Persist audio clip locally to disk if base64 data URI
+            if audio_url and "base64," in audio_url:
+                try:
+                    import base64
+                    renders_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "public", "renders", project_id))
+                    os.makedirs(renders_dir, exist_ok=True)
+                    audio_disk_path = os.path.join(renders_dir, f"audio_{shot_id}.mp3")
+                    b64_part = audio_url.split("base64,")[1]
+                    with open(audio_disk_path, "wb") as af:
+                        af.write(base64.b64decode(b64_part))
+                    audio_url = f"/renders/{project_id}/audio_{shot_id}.mp3"
+                except Exception as save_err:
+                    print(f"[Voiceover Agent] Could not save audio file to disk: {save_err}")
+
             words = len(dialogue.split())
             est_duration = max(1.5, round(words / 2.5, 1))
 
@@ -512,6 +550,40 @@ async def video_agent_node(state: FilmGraphState, config: RunnableConfig):
         visual_desc = shot.get("visual_description") or shot.get("description") or ""
         vo = voiceovers.get(shot_id)
 
+        final_clip_out = os.path.join(renders_dir, f"{shot_id}.mp4")
+        thumb_path = os.path.join(renders_dir, f"thumb_{shot_id}.jpg")
+
+        # Reuse existing completed clip if already present on disk
+        if os.path.exists(final_clip_out) and os.path.getsize(final_clip_out) > 50000:
+            print(f"[Video Gen] Shot {shot_id} already exists on disk ({os.path.getsize(final_clip_out)} bytes). Reusing.")
+            if not os.path.exists(thumb_path):
+                thumb_cmd = [FFMPEG_BIN, "-y", "-ss", "00:00:01", "-i", final_clip_out, "-vframes", "1", thumb_path]
+                await asyncio.to_thread(lambda: subprocess.run(thumb_cmd, capture_output=True))
+            try:
+                clip_info = probe(final_clip_out)
+                real_duration = round(clip_info.duration, 3) if clip_info.duration > 0 else PROVIDER_CLIP_LENGTH_SEC
+            except Exception:
+                real_duration = PROVIDER_CLIP_LENGTH_SEC
+            rel_video_url = f"/renders/{project_id}/{shot_id}.mp4"
+            rel_thumb_url = f"/renders/{project_id}/thumb_{shot_id}.jpg"
+            video_shot_records.append({
+                "shot_id": shot_id,
+                "video_url": rel_video_url,
+                "thumbnail_url": rel_thumb_url,
+                "speaker": speaker,
+                "dialogue": dialogue,
+                "prompt": visual_desc,
+                "duration_seconds": real_duration,
+                "duration_sec": real_duration,
+                "status": "completed",
+                "padding_applied": None,
+                "static_fallback": False,
+                "error_message": None
+            })
+            state["video_shots"] = video_shot_records
+            await _safe_update_state(update_state_fn, state)
+            continue
+
         # 1. Generate unique scene keyframe using the script's visual context
         shot_scene_img = os.path.join(renders_dir, f"{shot_id}_scene.jpg")
         img_path = None
@@ -562,15 +634,19 @@ async def video_agent_node(state: FilmGraphState, config: RunnableConfig):
             await emitter.push("status", content=f"Generating real AI video motion for Shot {idx+1}/{len(shots)} ({speaker})...")
 
         audio_path = os.path.join(renders_dir, f"audio_{shot_id}.mp3")
-        has_audio = False
-        if vo and vo.get("audio_url"):
-            try:
-                b64 = vo["audio_url"].split("base64,")[1]
-                with open(audio_path, "wb") as af:
-                    af.write(base64.b64decode(b64))
+        has_audio = os.path.exists(audio_path) and os.path.getsize(audio_path) > 100
+        if not has_audio and vo and vo.get("audio_url"):
+            if "base64," in vo["audio_url"]:
+                try:
+                    b64 = vo["audio_url"].split("base64,")[1]
+                    with open(audio_path, "wb") as af:
+                        af.write(base64.b64decode(b64))
+                    has_audio = True
+                except Exception as e:
+                    print(f"[Warning] Failed to decode audio for {shot_id}: {e}")
+            elif os.path.exists(vo["audio_url"]):
+                audio_path = vo["audio_url"]
                 has_audio = True
-            except Exception as e:
-                print(f"[Warning] Failed to decode audio for {shot_id}: {e}")
 
         raw_clip_out = os.path.join(renders_dir, f"{shot_id}_raw.mp4")
         final_clip_out = os.path.join(renders_dir, f"{shot_id}.mp4")
@@ -580,7 +656,11 @@ async def video_agent_node(state: FilmGraphState, config: RunnableConfig):
         characters = state.get("characters", [])
         char_match = next((c for c in characters if c.get("name", "").lower() == speaker.lower()), None)
         char_style = f" Character details: {char_match.get('description')}" if char_match and char_match.get("description") else ""
-        motion_prompt = f"{speaker}: {visual_desc or dialogue}.{char_style} Cinematic animation, fluid motion."
+        motion_prompt = (
+            f"{speaker}: {visual_desc or dialogue}.{char_style} "
+            f"Vibrant cinematic animation, continuous lively character movement, expressive talking and gestures, "
+            f"fluid dynamic interactions, 60fps high quality anime movie scene, no freeze frame, continuous motion."
+        )
 
         ai_clip = None
         clip_info = None
@@ -604,8 +684,8 @@ async def video_agent_node(state: FilmGraphState, config: RunnableConfig):
                     raise RuntimeError("Output clip has no video stream")
                 if clip_info.duration <= 0.5 or (clip_info.fps is not None and clip_info.fps <= 1.0):
                     raise RuntimeError(f"Static clip detected: duration={clip_info.duration:.2f}s, fps={clip_info.fps}")
-                # Minimum acceptable duration allows slow-mo stretch (up to 1.5s short)
-                min_acceptable = max(1.0, PROVIDER_CLIP_LENGTH_SEC - 1.5)
+                # Minimum acceptable duration allows slow-mo stretch (down to 3.0s)
+                min_acceptable = 3.0
                 if clip_info.duration < min_acceptable:
                     raise RuntimeError(f"Clip too short: {clip_info.duration:.2f}s < {min_acceptable:.2f}s")
                 break  # Successful generation
@@ -662,6 +742,8 @@ async def video_agent_node(state: FilmGraphState, config: RunnableConfig):
             "static_fallback": False,
             "error_message": None
         })
+        state["video_shots"] = video_shot_records
+        await _safe_update_state(update_state_fn, state)
 
     state["current_stage"] = "video"
     state["video_shots"] = video_shot_records

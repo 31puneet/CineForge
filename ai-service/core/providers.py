@@ -216,16 +216,16 @@ class PollinationsImageAdapter(BaseImageProvider):
             clean_prompt = f"concept portrait, detailed, {clean_prompt}"
         encoded_prompt = urllib.parse.quote(clean_prompt)
         seed = kwargs.get("seed", random.randint(1000, 999999))
-        key = getattr(settings, "POLLINATIONS_API_KEY", "")
+        key = getattr(settings, "POLLINATIONS_API_KEY", "") or os.getenv("POLLINATIONS_API_KEY", "")
 
         safe_params = [f"seed={seed}", "nologo=true"]
         if self.width and self.height:
             safe_params.append(f"width={self.width}&height={self.height}")
+        if key:
+            safe_params.append(f"key={key}")
         safe_query_str = "&".join(safe_params)
-        safe_image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?{safe_query_str}"
-
-        req_query_str = safe_query_str + (f"&token={key}" if key else "")
-        req_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?{req_query_str}"
+        safe_image_url = f"https://gen.pollinations.ai/image/{encoded_prompt}?{safe_query_str}"
+        req_url = safe_image_url
 
         headers = {}
         if key:
@@ -515,14 +515,29 @@ class EdgeTTSAudioAdapter(BaseAudioProvider):
                     pitch = preset["pitch"]
                     rate = preset["rate"]
                     break
-        comm = edge_tts.Communicate(clean_text, resolved_voice, pitch=pitch, rate=rate)
-        chunks = []
-        async for chunk in comm.stream():
-            if chunk["type"] == "audio":
-                chunks.append(chunk["data"])
-        audio_bytes = b"".join(chunks)
-        b64 = base64.b64encode(audio_bytes).decode("utf-8")
-        return f"data:audio/mp3;base64,{b64}"
+        try:
+            comm = edge_tts.Communicate(clean_text, resolved_voice, pitch=pitch, rate=rate)
+            chunks = []
+            async for chunk in comm.stream():
+                if chunk["type"] == "audio":
+                    chunks.append(chunk["data"])
+            audio_bytes = b"".join(chunks)
+            if audio_bytes:
+                b64 = base64.b64encode(audio_bytes).decode("utf-8")
+                return f"data:audio/mp3;base64,{b64}"
+        except Exception as e:
+            print(f"[EdgeTTS] Error generating speech with voice {resolved_voice}: {e}. Retrying with default voice.")
+            comm = edge_tts.Communicate(clean_text, "en-US-GuyNeural")
+            chunks = []
+            async for chunk in comm.stream():
+                if chunk["type"] == "audio":
+                    chunks.append(chunk["data"])
+            audio_bytes = b"".join(chunks)
+            if audio_bytes:
+                b64 = base64.b64encode(audio_bytes).decode("utf-8")
+                return f"data:audio/mp3;base64,{b64}"
+            raise e
+        return ""
 
     def match_character_voice(self, char_name: str, char_role: str = "", description: str = "", gender: str = "") -> dict:
         import re
@@ -632,6 +647,8 @@ class EdgeTTSAudioAdapter(BaseAudioProvider):
 class ElevenLabsAudioAdapter(BaseAudioProvider):
     """Studio-grade voiceover provider powered by ElevenLabs with automatic fallback to EdgeTTS."""
 
+    _api_key_valid: bool | None = None
+
     VOICE_PRESETS = {
         # Narrative & Dramatic
         "narrator": {"voice": "pNInz6obpgDQGcFmaJgB", "label": "Adam (Dominant Movie Trailer Narrator)", "gender": "male"},
@@ -687,6 +704,9 @@ class ElevenLabsAudioAdapter(BaseAudioProvider):
         if not clean_text:
             return ""
 
+        if ElevenLabsAudioAdapter._api_key_valid is False or not self.api_key:
+            return await self._fallback_provider.generate_speech(text, voice_id=voice_id, pitch=pitch, rate=rate)
+
         # Map EdgeTTS voice names if passed
         resolved_voice = self.EDGE_TO_ELEVEN_MAP.get(voice_id, voice_id)
         # If not a valid ElevenLabs voice ID length (standard is 20 chars), fallback to default
@@ -714,9 +734,12 @@ class ElevenLabsAudioAdapter(BaseAudioProvider):
             async with httpx.AsyncClient(timeout=45.0) as client:
                 resp = await client.post(url, headers=headers, json=payload)
                 if resp.status_code == 200:
+                    ElevenLabsAudioAdapter._api_key_valid = True
                     b64_audio = base64.b64encode(resp.content).decode("utf-8")
                     return f"data:audio/mp3;base64,{b64_audio}"
                 else:
+                    if resp.status_code in (401, 403):
+                        ElevenLabsAudioAdapter._api_key_valid = False
                     print(f"[ElevenLabsAudioAdapter] API returned {resp.status_code}: {resp.text[:120]}. Falling back to EdgeTTS.")
         except Exception as e:
             print(f"[ElevenLabsAudioAdapter] Network or generation error: {e}. Falling back to EdgeTTS.")

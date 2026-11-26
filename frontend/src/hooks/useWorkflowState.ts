@@ -1,42 +1,63 @@
 import { useState, useEffect, useCallback } from 'react';
 import apiClient from '../api/client';
+import type { WorkflowState } from '../types/workflow';
 
-export interface WorkflowState {
-  current_stage: string | null;
-  script_data: any | null;
-  script_version?: number;
-  script_history?: any[];
-  characters?: any[];
-  character_version?: number;
-  character_history?: any[];
-  approval_states: {
-    script_approved?: boolean;
-    characters_approved?: boolean;
-    voiceovers_approved?: boolean;
-    video_approved?: boolean;
-  };
-}
+export type {
+  Character,
+  Voiceover,
+  VideoShot,
+  WorkflowState,
+  ApprovalStates,
+} from '../types/workflow';
 
 export function useWorkflowState(projectId: string | undefined) {
-  const [workflowState, setWorkflowState] = useState<WorkflowState | null>(null);
+  const [stateRecord, setStateRecord] = useState<{ projectId: string; data: WorkflowState } | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const workflowState = projectId && stateRecord?.projectId === projectId ? stateRecord.data : null;
 
   const fetchState = useCallback(async () => {
     if (!projectId) return;
     try {
       setIsLoading(true);
-      const res = await apiClient.get(`/projects/${projectId}/messages/state`);
-      setWorkflowState(res.data);
-    } catch (error) {
-      console.error('Failed to fetch workflow state', error);
+      setError(null);
+      const res = await apiClient.get<WorkflowState>(`/projects/${projectId}/messages/state`);
+      setStateRecord({ projectId, data: res.data });
+    } catch (err) {
+      console.error('Failed to fetch workflow state:', err);
+      setError('Failed to load workflow state.');
     } finally {
       setIsLoading(false);
     }
   }, [projectId]);
 
   useEffect(() => {
-    fetchState();
-  }, [fetchState]);
+    if (!projectId) return;
+    let cancelled = false;
+    apiClient
+      .get<WorkflowState>(`/projects/${projectId}/messages/state`)
+      .then((res) => {
+        if (!cancelled) {
+          setStateRecord({ projectId, data: res.data });
+          setError(null);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          console.error('Failed to fetch workflow state:', err);
+          setError('Failed to load workflow state.');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
 
-  return { workflowState, isLoading, fetchState };
+  return { workflowState, isLoading, error, fetchState };
 }

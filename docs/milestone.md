@@ -89,49 +89,50 @@ This document is the definitive engineering roadmap for CineForge. It translates
 * [x] **Approval API**: Implement `/api/projects/:id/script/approve` and `/api/projects/:id/script/reject` in Node.js. 
 * [x] **Regeneration Logic**: If rejected, send feedback back to FastAPI. Graph routes back to `generate_script`, creating Version 2 while preserving Version 1 in Mongo.
 
-### [ ] Milestone 9: Stage 2 - Character Generation & Review
+### [x] Milestone 9: Stage 2 - Character Generation & Review
 **What it does:** Extracts speakers from the script and generates consistent visual reference images for them.
-* [ ] **Character Extraction**: FastAPI analyzes `script_data` and identifies unique speakers.
-* [ ] **Image Generation Adapter**: Implement `BaseImageProvider` and a concrete adapter for an image generation API.
-* [ ] **Character Node**: Implement `generate_characters` LangGraph node. Loops through characters, generates prompts, calls Image API, uploads images to MinIO, and updates `FilmGraphState.characters`.
-* [ ] **Character UI**: Build a grid of "Character Cards" in the React Right Panel. Show the reference image, name, and description.
-* [ ] **Targeted Regeneration**: Implement per-character rejection. If Character A is bad, Node.js API `/api/projects/:id/characters/:charId/regenerate` triggers FastAPI to *only* regenerate Character A.
+* [x] **Character Extraction**: FastAPI analyzes `script_data` and identifies unique speakers.
+* [x] **Image Generation Adapter**: Implement `BaseImageProvider` and a concrete adapter for an image generation API.
+* [x] **Character Node**: Implement `generate_characters` LangGraph node. Loops through characters, generates prompts, calls Image API, saves portraits locally and uploads to MinIO when `STORAGE_MODE=minio`, and updates `FilmGraphState.characters`.
+* [x] **Character UI**: Build a grid of "Character Cards" in the React Right Panel. Show the reference image, name, and description.
+* [x] **Targeted Regeneration**: Implement per-character rejection. If Character A is bad, Node.js API `/api/projects/:id/characters/:charId/regenerate` triggers FastAPI to *only* regenerate Character A.
 
-### [ ] Milestone 10: Stage 3 - Voiceover Generation & Review
+
+### [x] Milestone 10: Stage 3 - Voiceover Generation & Review
 **What it does:** Generates TTS audio for all dialogue lines, mapping characters to specific voices.
-* [ ] **Audio Provider Adapter**: Implement `BaseAudioProvider` for a TTS service (e.g., ElevenLabs API mapping).
-* [ ] **Voiceover Node**: Implement `generate_voiceovers` LangGraph node. Maps characters to voice IDs, iterates over script shots containing dialogue, generates audio, uploads to MinIO, updates state.
-* [ ] **Audio UI**: Build a playback interface in the React Right Panel. List dialogue lines with an HTML5 `<audio>` player attached to pre-signed MinIO URLs.
-* [ ] **Per-Segment Approval**: Implement targeted rejection/regeneration for specific dialogue lines, exactly like the character flow.
+* [x] **Audio Provider Adapter**: Implement `BaseAudioProvider` for a TTS service (`VoiceStudioAudioAdapter` + config-driven `voice_presets.json`).
+* [x] **Voiceover Node**: Implement `generate_voiceovers` LangGraph node. Maps characters to voice IDs, iterates over script shots containing dialogue, generates audio, uploads to MinIO (`media_storage`), updates state.
+* [x] **Audio UI**: Build a playback interface in the React Right Panel. List dialogue lines with an HTML5 `<audio>` player attached to pre-signed MinIO URLs via `/api/projects/:id/media`, inline dialogue editing, and voice preset selection.
+* [x] **Per-Segment Approval**: Implement targeted rejection/regeneration for specific dialogue lines, plus HITL-003 stage approval.
 
 ### [ ] Milestone 11: Robust Background Job System (Redis/BullMQ)
 **What it does:** Video generation is too slow for HTTP requests. We must build a queue system to handle parallel rendering asynchronously.
-* [ ] **Queue Infrastructure**: Integrate `bullmq` or `ioredis` queue patterns in the Node backend. Create a `video-generation-queue`.
-* [ ] **Job Models**: Create `Job.ts` Mongoose schema for durable tracking (jobId, type, status, progress, errorLogs, payload).
+* [ ] **Queue Infrastructure**: Integrate `bullmq` or `ioredis` queue patterns in the Node backend (partial: Redis queue/status keys added in `job.service.ts` & `core/job_queue.py`; full BullMQ worker queue deferred).
+* [x] **Job Models**: Create `Job.ts` Mongoose schema for durable tracking (jobId, type, status, progress, errorLogs, payload).
 * [ ] **Worker Process**: Create a dedicated Worker service/thread in Node.js that listens to the queue, executes tasks, and updates Job status.
-* [ ] **Idempotency & Retries**: Configure exponential backoff for failed jobs. Implement idempotency keys to ensure a double-click on "Generate Video" doesn't queue duplicate 5-minute renders.
+* [ ] **Idempotency & Retries**: Configure exponential backoff for failed jobs (`idempotencyKey` and `attempts`/`maxAttempts` tracked on `Job`; standalone retry worker deferred).
 
 ### [ ] Milestone 12: Stage 4 - Video Generation Agent (Parallel)
 **What it does:** Triggers AI video models to render individual shots based on the script, character images, and audio.
-* [ ] **Video Provider Adapter**: Implement `BaseVideoProvider` (e.g., mapping to Runway/Luma APIs). Handles async job submission and polling to the external API.
-* [ ] **FastAPI -> Node Handoff**: When LangGraph enters `generate_video` state, it sends a command to Node.js detailing all required shots. Node.js pushes N jobs to the Redis queue (Parallel execution).
-* [ ] **Worker Execution**: The Node worker takes a job, calls FastAPI's Video Adapter (or talks to the provider directly via Python workers if Celery is used. *Decision: Keep workers in Python using Celery/RQ, or Node? TDD suggests Redis queues. Let's implement Python RQ/Celery for AI tasks to keep AI code in Python*).
-* [ ] **Shot Tracking**: The system must track the state of *each* shot independently (Queued, Rendering, Completed, Failed).
+* [x] **Video Provider Adapter**: Implement `BaseVideoProvider` (HuggingFace + Pollinations adapter in `core/video_generator.py`). Handles async job submission and polling to the external API.
+* [ ] **FastAPI -> Node Handoff**: When LangGraph enters `generate_video` state, it sends a command to Node.js detailing all required shots (currently `video_agent_node` executes bounded parallel tasks directly in Python using `run_parallel_shot_tasks` + Redis status updates).
+* [ ] **Worker Execution**: Dedicated Celery/RQ/BullMQ standalone worker daemon (deferred; currently parallel `asyncio.Semaphore` execution inside `ai-service`).
+* [x] **Shot Tracking**: The system tracks the state of *each* shot independently (`rendering`, `completed`, `failed`, `failed_quota`, `approved`) and exposes `/api/projects/:id/messages/jobs`.
 
-### [ ] Milestone 13: Stage 4 - Video Review UI
+### [x] Milestone 13: Stage 4 - Video Review UI
 **What it does:** Allows the user to review the generated clips in a timeline view.
-* [ ] **Video Timeline UI**: Build a horizontal scrolling timeline in React. Each block represents a shot.
-* [ ] **Live Status**: Map the individual job statuses to UI indicators (spinners for rendering, red alerts for failed, thumbnails for completed).
-* [ ] **Video Playback**: Implement a robust video player. When a user clicks a shot, fetch the pre-signed MinIO URL and play it.
-* [ ] **Targeted Shot Regeneration**: Implement API to reject a specific shot, requeueing its job without touching approved shots.
+* [x] **Video Timeline UI**: Build a shot review/timeline list in React (`VideoViewer.tsx`). Each block represents a shot.
+* [x] **Live Status**: Map the individual shot statuses to UI indicators (rendering, failed, approved, completed).
+* [x] **Video Playback**: Implement a robust video player wired to `/api/projects/:id/media` pre-signed MinIO URLs (or local render paths in local storage mode), plus dynamic total duration and approval-gated master playback.
+* [x] **Targeted Shot Regeneration**: Implement API to approve or regenerate a specific shot (`/api/projects/:id/shots/:shotId/approve` & `/regenerate`) without touching approved shots.
 
-### [ ] Milestone 14: Stage 5 - Editor Agent (FFmpeg Assembly)
+### [x] Milestone 14: Stage 5 - Editor Agent (FFmpeg Assembly)
 **What it does:** Stitches the final approved clips and audio tracks into a cohesive MP4 file.
-* [ ] **FFmpeg Infrastructure**: Install `ffmpeg` in the AI-Service Docker container. Implement Python `subprocess` wrappers using strict argument arrays to prevent shell injection.
-* [ ] **Editor Node**: Implement `assemble_video` LangGraph node. It downloads all approved video clips and audio clips from MinIO to a temporary local scratch directory.
-* [ ] **Timeline Construction**: Construct the complex FFmpeg command (concat demuxer, audio mixing, padding/trimming to exact durations specified in the script).
-* [ ] **Final Render**: Execute FFmpeg. Upload the massive resulting `master.mp4` back to MinIO. Update `Project` status to `Completed`.
-* [ ] **Cleanup**: Strictly wipe the temporary scratch directory to prevent container disk exhaustion.
+* [x] **FFmpeg Infrastructure**: Install `ffmpeg` in the AI-Service Docker container. Implement Python `subprocess` wrappers using strict argument arrays to prevent shell injection.
+* [x] **Editor Node**: Implement `assemble_video` LangGraph node (`editor_agent_node`, preceded by HITL-005 `confirm_assembly_node`). Downloads/stages approved video clips and audio clips into a unique per-run temporary scratch directory.
+* [x] **Timeline Construction**: Construct the complex FFmpeg pipeline (normalize/trim/pad, subtitle ASS burn-in, concat, audio mixing, EBU R128 loudness normalization to `-16 LUFS`, and dual `MediaValidator` + `verify_film` QC gates).
+* [x] **Final Render**: Execute FFmpeg. Upload the resulting `master.mp4` via `media_storage` to MinIO (when configured) and sync backend asset metadata. Update `Project` status to `Completed`.
+* [x] **Cleanup**: Strictly wipe the temporary scratch directory in a `finally:` block to prevent container disk exhaustion.
 
 ---
 

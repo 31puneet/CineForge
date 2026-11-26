@@ -3,6 +3,7 @@ import mongoose, { Document, Schema } from 'mongoose';
 export interface IAsset extends Document {
   projectId: mongoose.Types.ObjectId;
   userId: mongoose.Types.ObjectId;
+  characterId?: string;
   type: 'image' | 'audio' | 'video' | 'document' | 'other';
   bucket: string;
   objectKey: string;
@@ -25,6 +26,10 @@ const assetSchema = new Schema<IAsset>(
       type: Schema.Types.ObjectId,
       ref: 'User',
       required: true,
+      index: true,
+    },
+    characterId: {
+      type: String,
       index: true,
     },
     type: {

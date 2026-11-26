@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { requireAuth } from '../middleware/requireAuth';
-import { getUploadUrl, createAsset, getAssetsByProject } from './asset.controller';
+import { getUploadUrl, createAsset, getAssetsByProject, getPresignedMediaUrl } from './asset.controller';
 
 const router = Router({ mergeParams: true });
 
@@ -10,5 +10,6 @@ router.use(requireAuth);
 router.post('/upload-url', getUploadUrl);
 router.post('/', createAsset);
 router.get('/', getAssetsByProject);
+router.get('/media', getPresignedMediaUrl);
 
 export default router;

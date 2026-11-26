@@ -3,6 +3,7 @@ import { getProjects, getProject, createProject, updateProject, deleteProject } 
 import { requireAuth } from '../middleware/requireAuth';
 import assetRoutes from './asset.routes';
 import messageRoutes from './message.routes';
+import characterRoutes from './character.routes';
 
 const router = Router();
 
@@ -17,5 +18,7 @@ router.delete('/:id', deleteProject);
 
 router.use('/:projectId/assets', assetRoutes);
 router.use('/:projectId/messages', messageRoutes);
+router.use('/:projectId/characters', characterRoutes);
+
 
 export default router;

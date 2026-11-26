@@ -1,43 +1,52 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { X } from 'lucide-react';
+import { useTheme } from '../../context/ThemeContext';
+import type { Project } from '../../types/workflow';
 
 interface EditProjectModalProps {
-  project: any | null;
+  project: Project | null;
   onClose: () => void;
-  onEdit: (id: string, updates: any) => Promise<void>;
+  onEdit: (id: string, updates: Partial<Pick<Project, 'title' | 'status' | 'settings'>>) => Promise<void>;
 }
 
 export function EditProjectModal({ project, onClose, onEdit }: EditProjectModalProps) {
-  const [title, setTitle] = useState('');
-
-  useEffect(() => {
-    if (project) {
-      setTitle(project.title);
-    }
-  }, [project]);
+  const [title, setTitle] = useState(project?.title || '');
+  const { isDark } = useTheme();
 
   if (!project) return null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!title.trim()) return;
-    await onEdit(project._id || project.id, { title });
+    const projectId = project._id || project.id;
+    if (!title.trim() || !projectId) return;
+    await onEdit(projectId, { title });
     onClose();
   };
 
   return (
-    <div className="fixed inset-0 bg-stone-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-        <div className="flex items-center justify-between p-6 border-b border-stone-100">
-          <h3 className="text-xl font-serif font-bold text-stone-800">Edit Project</h3>
-          <button onClick={onClose} className="text-stone-400 hover:text-stone-600 transition-colors">
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className={`rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-200 border ${
+        isDark ? 'bg-[#121622] border-white/10 text-white' : 'bg-white border-stone-100 text-stone-800'
+      }`}>
+        <div className={`flex items-center justify-between p-6 border-b ${
+          isDark ? 'border-white/10' : 'border-stone-100'
+        }`}>
+          <h3 className={`text-xl font-serif font-bold ${isDark ? 'text-white' : 'text-stone-800'}`}>Edit Project</h3>
+          <button 
+            onClick={onClose} 
+            className={`transition-colors p-1 rounded-lg ${
+              isDark ? 'text-slate-400 hover:text-white hover:bg-white/10' : 'text-stone-400 hover:text-stone-600 hover:bg-stone-100'
+            }`}
+          >
             <X className="w-5 h-5" />
           </button>
         </div>
         
         <form onSubmit={handleSubmit} className="p-6">
           <div className="mb-6">
-            <label htmlFor="editProjectName" className="block text-sm font-medium text-stone-700 mb-2">
+            <label htmlFor="editProjectName" className={`block text-sm font-medium mb-2 ${
+              isDark ? 'text-slate-300' : 'text-stone-700'
+            }`}>
               Project Name
             </label>
             <input 
@@ -46,16 +55,30 @@ export function EditProjectModal({ project, onClose, onEdit }: EditProjectModalP
               autoFocus
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              className="w-full px-4 py-3 border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 transition-all shadow-sm"
+              className={`w-full px-4 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-500/30 focus:border-orange-500 transition-all shadow-sm ${
+                isDark
+                  ? 'bg-[#1A2030] border-white/15 text-white placeholder-slate-500'
+                  : 'bg-white border-stone-200 text-stone-900 placeholder-stone-400'
+              }`}
               required
             />
           </div>
 
           <div className="flex justify-end gap-3">
-            <button type="button" onClick={onClose} className="px-5 py-2.5 text-stone-600 font-medium hover:bg-stone-50 rounded-xl transition-colors">
+            <button 
+              type="button" 
+              onClick={onClose} 
+              className={`px-5 py-2.5 font-medium rounded-xl transition-colors ${
+                isDark ? 'text-slate-300 hover:bg-white/10' : 'text-stone-600 hover:bg-stone-50'
+              }`}
+            >
               Cancel
             </button>
-            <button type="submit" disabled={!title.trim()} className="px-5 py-2.5 bg-orange-600 text-white font-medium rounded-xl hover:bg-orange-700 disabled:bg-orange-300 transition-colors shadow-sm">
+            <button 
+              type="submit" 
+              disabled={!title.trim()} 
+              className="px-5 py-2.5 bg-orange-600 text-white font-medium rounded-xl hover:bg-orange-700 disabled:bg-orange-400/50 disabled:cursor-not-allowed transition-colors shadow-sm"
+            >
               Save Changes
             </button>
           </div>

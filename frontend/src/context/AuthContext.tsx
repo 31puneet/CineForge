@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import apiClient from '../api/client';
 
 export interface User {
@@ -25,9 +25,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const checkAuth = async () => {
     try {
-      const response = await apiClient.get('/auth/me');
+      const response = await apiClient.get<{ user: User }>('/auth/me');
       setUser(response.data.user);
-    } catch (error) {
+    } catch {
       setUser(null);
     } finally {
       setIsLoading(false);
@@ -35,16 +35,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   useEffect(() => {
-    checkAuth();
+    let cancelled = false;
+    apiClient
+      .get<{ user: User }>('/auth/me')
+      .then((response) => {
+        if (!cancelled) {
+          setUser(response.data.user);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setUser(null);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const logout = async () => {
     try {
       await apiClient.post('/auth/logout');
-      setUser(null);
-      // Optional: redirect to login or home
     } catch (error) {
       console.error('Logout failed', error);
+    } finally {
+      setUser(null);
     }
   };
 

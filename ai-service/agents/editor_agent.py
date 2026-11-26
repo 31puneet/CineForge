@@ -66,10 +66,10 @@ async def assemble_video(state: FilmGraphState, config: RunnableConfig) -> FilmG
             v_record = video_shots.get(shot_id)
             clip_path = None
 
-            # Look for local mp4 file in renders_dir or recorded url
-            candidate_local = renders_dir / f"{shot_id}_raw.mp4"
+            # Look for processed mp4 first, falling back to raw mp4 or recorded url
+            candidate_local = renders_dir / f"{shot_id}.mp4"
             if not candidate_local.exists():
-                candidate_local = renders_dir / f"{shot_id}.mp4"
+                candidate_local = renders_dir / f"{shot_id}_raw.mp4"
 
             if candidate_local.exists():
                 clip_path = candidate_local

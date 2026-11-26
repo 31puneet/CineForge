@@ -13,6 +13,14 @@ from schemas.state import FilmGraphState
 from core.events import WorkflowEventEmitter, get_event_queue, respond_to_approval
 
 router = APIRouter(prefix="/workflow", tags=["workflow"])
+_project_locks: Dict[str, asyncio.Lock] = {}
+
+def _get_project_lock(project_id: str) -> asyncio.Lock:
+    lock = _project_locks.get(project_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _project_locks[project_id] = lock
+    return lock
 
 class StartWorkflowRequest(BaseModel):
     project_id: str
@@ -70,7 +78,9 @@ def load_persisted_state(project_id: str) -> Optional[FilmGraphState]:
 def save_persisted_state(project_id: str, state: FilmGraphState):
     _memory_store[project_id] = state
     cache_path = os.path.join(STATE_CACHE_DIR, f"{project_id}.json")
+    tmp_path = os.path.join(STATE_CACHE_DIR, f"{project_id}.json.tmp")
     try:
+        final_film = state.get("final_film_url") or state.get("final_video_url")
         serializable = {
             "project_id": state.get("project_id"),
             "metadata": state.get("metadata", {}),
@@ -79,16 +89,23 @@ def save_persisted_state(project_id: str, state: FilmGraphState):
             "script_version": state.get("script_version", 0),
             "script_history": state.get("script_history", []),
             "characters": state.get("characters", []),
+            "character_version": state.get("character_version", 0),
+            "character_history": state.get("character_history", []),
             "voiceovers": state.get("voiceovers", []),
             "video_shots": state.get("video_shots", []),
+            "final_film_url": final_film,
+            "final_video_url": final_film,
+            "manifest": state.get("manifest"),
+            "total_film_duration": state.get("total_film_duration", 60.0),
             "approval_states": state.get("approval_states", {}),
             "messages": [
                 {"role": "user" if isinstance(m, HumanMessage) else "assistant", "content": getattr(m, "content", str(m))}
                 for m in state.get("messages", [])
             ]
         }
-        with open(cache_path, "w", encoding="utf-8") as f:
+        with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(serializable, f, indent=2)
+        os.replace(tmp_path, cache_path)
     except Exception as e:
         print(f"Error saving state cache: {e}")
 
@@ -155,12 +172,12 @@ async def start_workflow(req: StartWorkflowRequest):
                 except Exception as e:
                     print(f"Failed to extract document {att.get('name')}: {e}")
 
-    prompt_clean = req.user_prompt.strip().lower()
-    approval_keywords = [
-        "continue", "proceed", "next", "ok", "yes", "go on", "yep", "sure", 
+    prompt_clean = req.user_prompt.strip().lower().rstrip(".!")
+    approval_keywords = {
+        "continue", "proceed", "next", "ok", "yes", "go on", "yep", "sure",
         "looks good", "approve", "approved", "perfect", "good", "move on", "advance"
-    ]
-    is_continuation = any(prompt_clean == kw or prompt_clean.startswith(kw) for kw in approval_keywords)
+    }
+    is_continuation = prompt_clean in approval_keywords
     
     if cached and cached.get("script_data"):
         active_state = cached
@@ -317,29 +334,30 @@ async def start_workflow(req: StartWorkflowRequest):
 @router.post("/approve")
 async def respond_approval(req: RespondApprovalRequest):
     respond_to_approval(req.project_id, req.approved, req.reason)
-    cached = load_persisted_state(req.project_id)
-    if cached:
-        approval_states = cached.setdefault("approval_states", {})
-        if req.approved:
-            if not approval_states.get("script_approved") and cached.get("script_data"):
-                approval_states["script_approved"] = True
-            elif not approval_states.get("characters_approved") and cached.get("characters"):
-                approval_states["characters_approved"] = True
-            elif not approval_states.get("voiceovers_approved") and cached.get("voiceovers"):
-                approval_states["voiceovers_approved"] = True
-            elif not approval_states.get("video_approved") and cached.get("video_shots"):
-                if are_video_shots_valid(cached):
-                    approval_states["video_approved"] = True
-                else:
-                    approval_states["video_approved"] = False
-                    cached["current_stage"] = "video"
-            elif cached.get("current_stage") == "editor_failed":
-                if are_video_shots_valid(cached):
-                    approval_states["video_approved"] = True
-                else:
-                    approval_states["video_approved"] = False
-                    cached["current_stage"] = "video"
-        save_persisted_state(req.project_id, cached)
+    async with _get_project_lock(req.project_id):
+        cached = load_persisted_state(req.project_id)
+        if cached:
+            approval_states = cached.setdefault("approval_states", {})
+            if req.approved:
+                if not approval_states.get("script_approved") and cached.get("script_data"):
+                    approval_states["script_approved"] = True
+                elif not approval_states.get("characters_approved") and cached.get("characters"):
+                    approval_states["characters_approved"] = True
+                elif not approval_states.get("voiceovers_approved") and cached.get("voiceovers"):
+                    approval_states["voiceovers_approved"] = True
+                elif not approval_states.get("video_approved") and cached.get("video_shots"):
+                    if are_video_shots_valid(cached):
+                        approval_states["video_approved"] = True
+                    else:
+                        approval_states["video_approved"] = False
+                        cached["current_stage"] = "video"
+                elif cached.get("current_stage") == "editor_failed":
+                    if are_video_shots_valid(cached):
+                        approval_states["video_approved"] = True
+                    else:
+                        approval_states["video_approved"] = False
+                        cached["current_stage"] = "video"
+            save_persisted_state(req.project_id, cached)
     return {"status": "ok"}
 
 @router.post("/regenerate-character")
@@ -376,9 +394,15 @@ Output ONLY the revised 8K cinematic concept portrait prompt, with no extra conv
     new_seed = random.randint(100000, 999999)
     new_url = await image_adapter.generate_image(target_char.get("image_prompt", target_char["name"]), seed=new_seed)
     target_char["image_url"] = new_url
-    
-    save_persisted_state(req.project_id, state)
-    
+
+    async with _get_project_lock(req.project_id):
+        latest = load_persisted_state(req.project_id) or state
+        for idx, c in enumerate(latest.get("characters", [])):
+            if c.get("id") == req.character_id:
+                latest["characters"][idx] = target_char
+                break
+        save_persisted_state(req.project_id, latest)
+
     return {"status": "ok", "character": target_char}
 
 @router.post("/regenerate-voiceover")
@@ -405,9 +429,15 @@ async def regenerate_voiceover(req: RegenerateVoiceoverRequest):
     if req.voice_id:
         target_vo["voice_id"] = req.voice_id
         target_vo["voice_name"] = req.voice_id
-        
-    save_persisted_state(req.project_id, state)
-    
+
+    async with _get_project_lock(req.project_id):
+        latest = load_persisted_state(req.project_id) or state
+        for idx, v in enumerate(latest.get("voiceovers", [])):
+            if v.get("shot_id") == req.shot_id:
+                latest["voiceovers"][idx] = target_vo
+                break
+        save_persisted_state(req.project_id, latest)
+
     return {"status": "ok", "voiceover": target_vo}
 
 @router.post("/regenerate-shot")
@@ -477,7 +507,13 @@ async def regenerate_shot(req: RegenerateShotRequest):
         subprocess.run([FFMPEG_BIN, "-y", "-ss", "00:00:01", "-i", final_clip_out, "-vframes", "1", thumb_path], capture_output=True)
         target_shot["thumbnail_url"] = f"/renders/{req.project_id}/thumb_{req.shot_id}.jpg"
 
-    save_persisted_state(req.project_id, state)
+    async with _get_project_lock(req.project_id):
+        latest = load_persisted_state(req.project_id) or state
+        for idx, s in enumerate(latest.get("video_shots", [])):
+            if s.get("shot_id") == req.shot_id:
+                latest["video_shots"][idx] = target_shot
+                break
+        save_persisted_state(req.project_id, latest)
     return {"status": "ok", "shot": target_shot}
 
 @router.get("/state/{project_id}")
@@ -496,7 +532,7 @@ async def get_workflow_state(project_id: str):
         "character_history": state.get("character_history", []),
         "voiceovers": state.get("voiceovers", []),
         "video_shots": state.get("video_shots", []),
-        "final_video_url": state.get("final_video_url"),
+        "final_video_url": state.get("final_film_url") or state.get("final_video_url"),
         "total_film_duration": state.get("total_film_duration", 60.0),
         "approval_states": state.get("approval_states", {})
     }

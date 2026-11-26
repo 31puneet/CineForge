@@ -281,6 +281,14 @@ export const regenerateShot = async (req: Request, res: Response): Promise<void>
   try {
     const { projectId } = req.params;
     const { shotId, feedback } = req.body;
+    const userId = req.user?.id;
+
+    const project = await Project.findOne({ _id: projectId as string, userId });
+    if (!project) {
+      res.status(404).json({ error: 'Project not found' });
+      return;
+    }
+
     const aiServiceUrl = process.env.AI_SERVICE_URL || 'http://localhost:8000';
 
     const response = await fetch(`${aiServiceUrl}/api/workflow/regenerate-shot`, {

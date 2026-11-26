@@ -28,7 +28,8 @@ async def _safe_update_state(update_state_fn, state):
 def validate_and_split_dialogue(shots: list[dict], max_wps: float = 2.5) -> list[dict]:
     """
     Ensures spoken dialogue fits within shot duration at max_wps (~2.5 words/sec).
-    Splits overlength dialogue across consecutive shots rather than letting audio outlast video.
+    Splits overlength dialogue across consecutive shots of the same speaker, or raises
+    ValueError when overflow cannot be transferred (last shot or speaker change).
     """
     for i, shot in enumerate(shots):
         dur = float(shot.get("duration_seconds", PROVIDER_CLIP_SECONDS))
@@ -36,21 +37,27 @@ def validate_and_split_dialogue(shots: list[dict], max_wps: float = 2.5) -> list
         dialogue = (shot.get("dialogue") or "").strip()
         words = dialogue.split()
         if len(words) > max_words:
+            if i + 1 >= len(shots):
+                raise ValueError(
+                    f"Shot {i+1} dialogue ({len(words)} words) exceeds {max_words} words on the final shot."
+                )
+            next_shot = shots[i + 1]
+            next_speaker = next_shot.get("speaker")
+            curr_speaker = shot.get("speaker")
+            if next_speaker and next_speaker != curr_speaker:
+                raise ValueError(
+                    f"Shot {i+1} dialogue ({len(words)} words) exceeds {max_words} words and next shot has a different speaker ('{next_speaker}')."
+                )
             fitted_words = words[:max_words]
             overflow_words = words[max_words:]
             shot["dialogue"] = " ".join(fitted_words)
-            if i + 1 < len(shots) and overflow_words:
-                next_shot = shots[i + 1]
-                next_speaker = next_shot.get("speaker")
-                curr_speaker = shot.get("speaker")
-                if not next_speaker or next_speaker == curr_speaker:
-                    next_existing = (next_shot.get("dialogue") or "").strip()
-                    if next_existing:
-                        next_shot["dialogue"] = f"{' '.join(overflow_words)} {next_existing}"
-                    else:
-                        next_shot["dialogue"] = " ".join(overflow_words)
-                    if not next_speaker:
-                        next_shot["speaker"] = curr_speaker
+            next_existing = (next_shot.get("dialogue") or "").strip()
+            if next_existing:
+                next_shot["dialogue"] = f"{' '.join(overflow_words)} {next_existing}"
+            else:
+                next_shot["dialogue"] = " ".join(overflow_words)
+            if not next_speaker:
+                next_shot["speaker"] = curr_speaker
     return shots
 
 async def script_agent_node(state: FilmGraphState, config: RunnableConfig):
@@ -442,14 +449,29 @@ async def voiceover_agent_node(state: FilmGraphState, config: RunnableConfig):
                 
                 assigned_speaker_voices[spk_key] = voice_config
 
+            pitch = voice_config["pitch"]
+            rate = voice_config["rate"]
+            if rejection_feedback:
+                fb_lower = rejection_feedback.lower()
+                if any(k in fb_lower for k in ("slow", "slower", "calm")):
+                    rate = "-10%"
+                elif any(k in fb_lower for k in ("fast", "faster", "energetic", "upbeat")):
+                    rate = "+10%"
+                if any(k in fb_lower for k in ("deep", "deeper", "low", "lower")):
+                    pitch = "-12Hz"
+                elif any(k in fb_lower for k in ("high", "higher", "bright")):
+                    pitch = "+8Hz"
+                if rate == voice_config["rate"] and pitch == voice_config["pitch"]:
+                    rate = "-5%"
+
             if emitter:
                 await emitter.push("status", content=f"Rendering {voice_config.get('label', 'neural voice')} for {speaker} in Shot {idx+1}...")
 
             audio_url = await tts.generate_speech(
                 text=dialogue,
                 voice_id=voice_config["voice"],
-                pitch=voice_config["pitch"],
-                rate=voice_config["rate"]
+                pitch=pitch,
+                rate=rate
             )
 
             # Persist audio clip locally to disk if base64 data URI
@@ -712,10 +734,19 @@ async def video_agent_node(state: FilmGraphState, config: RunnableConfig):
             trim_cmd = [FFMPEG_BIN, "-y", "-i", ai_clip, "-t", str(target_dur), "-c", "copy", final_clip_out]
             res = await asyncio.to_thread(lambda: subprocess.run(trim_cmd, capture_output=True))
             if res.returncode != 0 or not os.path.exists(final_clip_out):
-                shutil.copyfile(ai_clip, final_clip_out)
-                real_duration = round(clip_info.duration, 3)
-            else:
-                real_duration = target_dur
+                reencode_cmd = [
+                    FFMPEG_BIN, "-y", "-i", ai_clip, "-t", str(target_dur),
+                    "-c:v", "libx264", "-preset", "fast", "-crf", str(settings.VIDEO_CRF),
+                    "-pix_fmt", "yuv420p", "-an", final_clip_out
+                ]
+                res = await asyncio.to_thread(lambda: subprocess.run(reencode_cmd, capture_output=True))
+            if res.returncode != 0 or not os.path.exists(final_clip_out):
+                err_msg = f"Failed to trim Shot {idx+1} ({shot_id}) to {target_dur:.2f}s"
+                if emitter:
+                    await emitter.push("error", message=err_msg)
+                raise RuntimeError(err_msg)
+            trimmed_info = probe(final_clip_out)
+            real_duration = round(trimmed_info.duration, 3) if trimmed_info.duration > 0 else target_dur
         else:
             shutil.copyfile(ai_clip, final_clip_out)
             real_duration = round(clip_info.duration, 3)

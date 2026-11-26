@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Any, Optional
 import json
+import os
 import re
 from langchain_google_genai import ChatGoogleGenerativeAI
 from core.config import settings
@@ -221,8 +222,6 @@ class PollinationsImageAdapter(BaseImageProvider):
         safe_params = [f"seed={seed}", "nologo=true"]
         if self.width and self.height:
             safe_params.append(f"width={self.width}&height={self.height}")
-        if key:
-            safe_params.append(f"key={key}")
         safe_query_str = "&".join(safe_params)
         safe_image_url = f"https://gen.pollinations.ai/image/{encoded_prompt}?{safe_query_str}"
         req_url = safe_image_url

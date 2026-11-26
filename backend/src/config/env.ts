@@ -15,6 +15,8 @@ const envSchema = z.object({
   MINIO_ACCESS_KEY: z.string().default('admin'),
   MINIO_SECRET_KEY: z.string().default('password123'),
   MINIO_USE_SSL: z.string().default('false'),
+  AI_SERVICE_URL: z.string().url().default('http://localhost:8000'),
+  INTERNAL_API_KEY: z.string().min(1).default('development_internal_api_key_123'),
 });
 
 const _env = envSchema.safeParse(process.env);

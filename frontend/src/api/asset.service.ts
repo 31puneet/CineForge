@@ -4,6 +4,7 @@ export interface UploadUrlResponse {
   uploadUrl: string;
   assetData: {
     projectId: string;
+    characterId?: string;
     bucket: string;
     objectKey: string;
     mimeType: string;
@@ -15,6 +16,7 @@ export interface UploadUrlResponse {
 export interface Asset {
   id: string;
   projectId: string;
+  characterId?: string;
   type: string;
   bucket: string;
   objectKey: string;
@@ -31,12 +33,10 @@ function resolveFileType(mimeType: string): string {
   return 'other';
 }
 
-/**
- * Requests a pre-signed upload URL from the backend.
- */
 export async function getUploadUrl(
   projectId: string,
-  file: File
+  file: File,
+  characterId?: string
 ): Promise<UploadUrlResponse> {
   const response = await apiClient.post<UploadUrlResponse>(
     `/projects/${projectId}/assets/upload-url`,
@@ -45,14 +45,12 @@ export async function getUploadUrl(
       mimeType: file.type,
       sizeBytes: file.size,
       type: resolveFileType(file.type),
+      characterId,
     }
   );
   return response.data;
 }
 
-/**
- * Uploads a file directly to MinIO using the pre-signed URL.
- */
 export async function uploadFileToStorage(
   uploadUrl: string,
   file: File
@@ -68,9 +66,6 @@ export async function uploadFileToStorage(
   }
 }
 
-/**
- * Creates the asset record in the database after a successful upload.
- */
 export async function createAssetRecord(
   projectId: string,
   assetData: UploadUrlResponse['assetData']
@@ -82,9 +77,6 @@ export async function createAssetRecord(
   return response.data.asset;
 }
 
-/**
- * Fetches all assets for a given project.
- */
 export async function getAssetsByProject(projectId: string): Promise<Asset[]> {
   const response = await apiClient.get<{ assets: Asset[] }>(
     `/projects/${projectId}/assets`

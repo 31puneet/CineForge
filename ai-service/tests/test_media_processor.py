@@ -2,8 +2,6 @@
 Unit tests for CineForge media processor and video pipeline.
 Tests Section 6 of CineForge Fix Spec.
 """
-import os
-import subprocess
 from pathlib import Path
 import pytest
 
@@ -19,13 +17,13 @@ from core.media_processor import (
     compute_shot_duration,
     format_ass_time,
     estimate_word_timings,
+    verify_film,
     create_shot_subtitles_ass,
     generate_title_card,
     generate_credits_card,
     MediaProcessingError,
     ShotTooShortError,
     DurationMismatchError,
-    FFMPEG_BIN,
     FFPROBE_BIN,
     _ff,
     _run
@@ -34,12 +32,11 @@ import math
 from agents.graph import validate_and_split_dialogue, PROVIDER_CLIP_SECONDS
 from core.media_validator import (
     MediaValidator,
-    detect_black_bars,
     detect_freezes,
     detect_shot_loops,
     detect_duplicate_shots
 )
-from core.providers import VoiceStudioAudioAdapter, get_audio_provider
+from core.providers import VoiceStudioAudioAdapter
 from core.video_generator import QuotaExceededError
 
 
@@ -345,20 +342,33 @@ def test_shot_count_math_and_dialogue_splitting():
     # 1. Shot count math: ceil(duration / PROVIDER_CLIP_SECONDS)
     target_duration = 60.0
     expected_shots = math.ceil(target_duration / PROVIDER_CLIP_SECONDS)
-    assert expected_shots == math.ceil(60.0 / 8.0) == 8
+    assert expected_shots == math.ceil(60.0 / settings.PROVIDER_CLIP_SECONDS)
 
-    # 2. Dialogue splitting check: max ~2.5 words per second
+    # 2. Dialogue splitting check: max ~2.5 words per second reserving pre/post margin
     shots = [
-        {"shot_id": "shot_1", "duration_seconds": 4.0, "dialogue": "One two three four five six seven eight nine ten eleven twelve thirteen fourteen", "speaker": "Alex"},
-        {"shot_id": "shot_2", "duration_seconds": 4.0, "dialogue": "", "speaker": "Alex"}
+        {"shot_id": "shot_1", "duration_seconds": 6.0, "dialogue": "One two three four five six seven eight nine ten eleven twelve thirteen fourteen", "speaker": "Alex"},
+        {"shot_id": "shot_2", "duration_seconds": 6.0, "dialogue": "", "speaker": "Alex"}
     ]
     split_shots = validate_and_split_dialogue(shots, max_wps=2.5)
-    # 4.0s * 2.5 = 10 words max in shot_1
+    # (6.0 - 2.0) * 2.5 = 10 words max in shot_1
     words_s1 = split_shots[0]["dialogue"].split()
     assert len(words_s1) <= 10
-    # Remaining overflow should be transferred to shot_2
     words_s2 = split_shots[1]["dialogue"].split()
     assert len(words_s2) > 0
+
+    # 3. Speaker change or final-shot overflow must raise ValueError instead of dropping dialogue
+    cross_speaker = [
+        {"shot_id": "shot_1", "duration_seconds": 4.0, "dialogue": " ".join([f"w{i}" for i in range(15)]), "speaker": "Alex"},
+        {"shot_id": "shot_2", "duration_seconds": 4.0, "dialogue": "", "speaker": "Bob"}
+    ]
+    with pytest.raises(ValueError):
+        validate_and_split_dialogue(cross_speaker, max_wps=2.5)
+
+    last_shot_overflow = [
+        {"shot_id": "shot_1", "duration_seconds": 4.0, "dialogue": " ".join([f"w{i}" for i in range(15)]), "speaker": "Alex"}
+    ]
+    with pytest.raises(ValueError):
+        validate_and_split_dialogue(last_shot_overflow, max_wps=2.5)
 
 
 def test_build_normalize_cmd():
@@ -439,3 +449,62 @@ def test_media_validator_detects_loops(tmp_path):
 
     loops = detect_shot_loops(looped, min_offset=2, max_offset=4, diff_threshold=3.0)
     assert len(loops) > 0
+
+
+def test_ass_text_escaping(tmp_path):
+    sub_file = tmp_path / "escaped.ass"
+    create_shot_subtitles_ass(
+        dialogue=r"Look {at}\nthis",
+        speaker="A{lex}",
+        duration=5.0,
+        out_path=sub_file
+    )
+    content = sub_file.read_text(encoding="utf-8")
+    assert r"\{at\}" in content
+    assert r"A\{LEX\}:" in content
+
+
+def test_slowmo_limit_raises_shot_too_short(tmp_path, make_test_video):
+    src = tmp_path / "clip4.mp4"
+    dst = tmp_path / "out.mp4"
+    make_test_video(src, duration=4.0)
+    # 4.0s * 1.25 = 5.0s max; requesting 5.5s exceeds MAX_SLOWMO_FACTOR even though diff is 1.5s
+    with pytest.raises(ShotTooShortError):
+        normalize_clip(src, dst, duration=5.5)
+
+
+def test_mux_shot_and_verify_film_freeze_failure(tmp_path, make_test_audio):
+    frozen_vid = tmp_path / "frozen_master.mp4"
+    _run(_ff(
+        "-f", "lavfi",
+        "-i", "color=c=black:s=1280x720:d=3.0:r=24",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-fps_mode", "cfr",
+        str(frozen_vid)
+    ))
+    aud = tmp_path / "aud.mp3"
+    make_test_audio(aud, duration=2.0)
+    muxed = tmp_path / "muxed_master.mp4"
+    mux_shot(frozen_vid, aud, muxed, duration=3.0)
+    assert muxed.exists()
+
+    qc = verify_film(muxed)
+    assert qc["checks"]["freezes"]["passed"] is False
+    assert qc["passed"] is False
+
+
+def test_duplicate_shots_and_validate_film(tmp_path, make_test_video, make_test_audio):
+    shot_a = tmp_path / "shot_a.mp4"
+    make_test_video(shot_a, duration=3.0, fps=24, width=1280, height=720)
+    # Passing identical shot path twice must be detected as duplicate, not collapsed by path key
+    dups = detect_duplicate_shots([shot_a, shot_a], diff_threshold=3.0)
+    assert len(dups) == 1
+
+    aud = tmp_path / "aud.mp3"
+    make_test_audio(aud, duration=2.0)
+    master = tmp_path / "master.mp4"
+    mux_shot(shot_a, aud, master, duration=3.0)
+
+    validator = MediaValidator(target_width=1280, target_height=720, target_fps=24, duration_tolerance=0.2)
+    res = validator.validate_film(master, expected_duration=3.0, shot_paths=[shot_a], title_card_duration=0.0, credits_card_duration=0.0)
+    assert res.passed is True
+

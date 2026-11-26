@@ -17,13 +17,15 @@ app.use(requestLogger);
 import authRoutes from './api/auth.routes';
 import projectRoutes from './api/project.routes';
 import { updateWorkflowState } from './api/message.controller';
+import { Asset } from './models/Asset';
+import { Project } from './models/Project';
 
 // Internal routes (requires internal API key)
 import crypto from 'crypto';
 
-app.put('/api/internal/projects/:projectId/messages/state', (req, res, next) => {
+const requireInternalApiKey = (req: express.Request, res: express.Response, next: express.NextFunction) => {
   const apiKey = req.headers['x-internal-api-key'] as string;
-  const expectedKey = process.env.INTERNAL_API_KEY;
+  const expectedKey = env.INTERNAL_API_KEY;
 
   if (!expectedKey) {
     console.error('INTERNAL_API_KEY is not set in environment');
@@ -36,7 +38,41 @@ app.put('/api/internal/projects/:projectId/messages/state', (req, res, next) => 
     return;
   }
   next();
-}, updateWorkflowState);
+};
+
+app.put('/api/internal/projects/:projectId/messages/state', requireInternalApiKey, updateWorkflowState);
+
+app.post('/api/internal/projects/:projectId/assets', requireInternalApiKey, async (req, res, next) => {
+  try {
+    const { projectId } = req.params;
+    const { bucket, objectKey, mimeType, sizeBytes, type, characterId, version } = req.body;
+    const project = await Project.findById(projectId);
+    if (!project) {
+      res.status(404).json({ error: 'Project not found' });
+      return;
+    }
+    const asset = await Asset.findOneAndUpdate(
+      { objectKey },
+      {
+        $set: {
+          projectId,
+          userId: project.userId,
+          characterId,
+          type,
+          bucket,
+          objectKey,
+          mimeType,
+          sizeBytes,
+          version: version || 1,
+        },
+      },
+      { upsert: true, new: true }
+    );
+    res.status(201).json({ asset });
+  } catch (error) {
+    next(error);
+  }
+});
 
 app.use('/api/auth', authRoutes);
 app.use('/api/projects', projectRoutes);

@@ -1,13 +1,12 @@
-import os
 import re
 import json
 import subprocess
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import Optional, Any
 
 from core.config import settings
-from core.media_processor import FFMPEG_BIN, FFPROBE_BIN, probe, MediaInfo
+from core.media_processor import FFMPEG_BIN, probe
 
 @dataclass
 class ValidationResult:

@@ -2,9 +2,10 @@ import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, MessageSquare, ListTodo, Settings, Sun, Moon } from 'lucide-react';
 import strings from '../../constants/strings.json';
 import { useTheme } from '../../context/ThemeContext';
+import type { Project } from '../../types/workflow';
 
 interface WorkspaceSidebarProps {
-  project: any;
+  project: Project;
 }
 
 export function WorkspaceSidebar({ project }: WorkspaceSidebarProps) {

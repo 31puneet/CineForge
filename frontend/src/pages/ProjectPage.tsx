@@ -15,11 +15,33 @@ import { FileText, MessageSquare, Users, Volume2, Film } from 'lucide-react';
 
 export default function ProjectPage() {
   const { id } = useParams();
+  return <ProjectWorkspace key={id} id={id} />;
+}
+
+function ProjectWorkspace({ id }: { id: string | undefined }) {
   const { project, isLoading, error } = useProject(id);
   const { workflowState, fetchState } = useWorkflowState(id);
   const { isDark } = useTheme();
   
-  const [activeTab, setActiveTab] = useState<'chat' | 'script' | 'characters' | 'characters_tab' | 'audio' | 'video'>('chat');
+  type ProjectTab = 'chat' | 'script' | 'characters' | 'audio' | 'video';
+  const [activeTab, setActiveTab] = useState<ProjectTab>('chat');
+
+  const handleSwitchTab = (tab: string) => {
+    const tabMap: Record<string, ProjectTab> = {
+      chat: 'chat',
+      script: 'script',
+      characters: 'characters',
+      characters_tab: 'characters',
+      audio: 'audio',
+      audio_tab: 'audio',
+      video: 'video',
+      video_tab: 'video',
+    };
+    const nextTab = tabMap[tab];
+    if (nextTab) {
+      setActiveTab(nextTab);
+    }
+  };
 
   if (isLoading) {
     return (
@@ -41,10 +63,17 @@ export default function ProjectPage() {
     );
   }
 
-  const hasScript = !!workflowState?.script_data;
-  const hasCharacters = (workflowState?.characters && workflowState.characters.length > 0) || (workflowState?.character_history && workflowState.character_history.length > 0);
-  const hasAudio = !!(workflowState?.voiceovers && workflowState.voiceovers.length > 0);
-  const hasVideo = !!(workflowState?.video_shots && workflowState.video_shots.length > 0) || !!workflowState?.final_video_url;
+  const hasScript = Boolean(workflowState?.script_data);
+  const hasCharacters = Boolean(
+    (workflowState?.characters && workflowState.characters.length > 0) ||
+    (workflowState?.character_history && workflowState.character_history.length > 0)
+  );
+  const hasAudio = Boolean(workflowState?.voiceovers && workflowState.voiceovers.length > 0);
+  const hasVideo = Boolean(
+    (workflowState?.video_shots && workflowState.video_shots.length > 0) ||
+    workflowState?.final_film_url ||
+    workflowState?.final_video_url
+  );
 
   return (
     <div className={`h-screen w-screen overflow-hidden flex transition-colors duration-300 ${
@@ -99,7 +128,7 @@ export default function ProjectPage() {
             <button 
               onClick={() => setActiveTab('characters')}
               className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-t-lg transition-colors cursor-pointer ${
-                activeTab === 'characters' || activeTab === 'characters_tab'
+                activeTab === 'characters'
                   ? isDark 
                     ? 'bg-[#0E111A] text-white border border-b-0 border-white/15'
                     : 'bg-white text-stone-900 border border-b-0 border-stone-200 shadow-2xs' 
@@ -153,12 +182,12 @@ export default function ProjectPage() {
         {/* Tab Content */}
         <div className="flex-1 overflow-hidden relative">
           <div className={`absolute inset-0 ${activeTab === 'chat' ? 'block' : 'hidden'}`}>
-            <AgentChat project={project} workflowState={workflowState} onFetchState={fetchState} onSwitchTab={(tab) => setActiveTab(tab as any)} />
+            <AgentChat project={project} workflowState={workflowState} onFetchState={fetchState} onSwitchTab={handleSwitchTab} />
           </div>
           <div className={`absolute inset-0 ${activeTab === 'script' ? 'block' : 'hidden'}`}>
             <ScriptViewer project={project} workflowState={workflowState} />
           </div>
-          <div className={`absolute inset-0 ${activeTab === 'characters' || activeTab === 'characters_tab' ? 'block' : 'hidden'}`}>
+          <div className={`absolute inset-0 ${activeTab === 'characters' ? 'block' : 'hidden'}`}>
             <CharacterViewer workflowState={workflowState} projectId={id} onRefreshState={fetchState} />
           </div>
           {activeTab === 'audio' && (

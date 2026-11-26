@@ -8,12 +8,11 @@ export interface IProjectSettings {
 }
 
 export interface IProjectMessage {
-  _id?: any;
+  _id?: Types.ObjectId;
   role: 'user' | 'assistant' | 'system';
   content: string;
-  attachments?: any[];
-  metadata?: any;
-  createdAt?: Date;
+  attachments?: Record<string, unknown>[];
+  metadata?: Record<string, unknown>;
   timestamp?: Date;
 }
 
@@ -23,7 +22,7 @@ export interface IProject extends Document {
   title: string;
   status: ProjectStatus;
   settings: IProjectSettings;
-  workflowState?: any;
+  workflowState?: Record<string, unknown>;
   messages?: IProjectMessage[];
   createdAt: Date;
   updatedAt: Date;
@@ -60,21 +59,21 @@ const ProjectSchema = new Schema<IProject>({
     default: {}
   },
   messages: [{
-    role: { type: String, required: true },
+    role: { type: String, enum: ['user', 'assistant', 'system'], required: true },
     content: { type: String, required: true },
     attachments: { type: Array, default: [] },
     metadata: { type: Schema.Types.Mixed, default: {} },
-    timestamp: { type: Date, default: Date.now },
-    createdAt: { type: Date, default: Date.now }
+    timestamp: { type: Date, default: Date.now }
   }]
 }, {
   timestamps: true,
   toJSON: {
     transform: (_, ret) => {
-      ret.id = ret._id;
-      delete ret._id;
-      delete ret.__v;
-      return ret;
+      const json = ret as unknown as Record<string, unknown>;
+      json.id = json._id;
+      delete json._id;
+      delete json.__v;
+      return json;
     }
   }
 });

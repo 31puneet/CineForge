@@ -18,6 +18,7 @@ try:
     from pydantic_settings import BaseSettings
 except ImportError:
     from pydantic import BaseModel
+
     class BaseSettings(BaseModel):
         def __init__(self, **values):
             init_vals = {}
@@ -27,6 +28,7 @@ except ImportError:
                     init_vals[field_name] = os.environ[field_name]
             init_vals.update(values)
             super().__init__(**init_vals)
+
 
 class Settings(BaseSettings):
     GEMINI_API_KEY: str = ""
@@ -41,6 +43,19 @@ class Settings(BaseSettings):
     VOICESTUDIO_API_URL: str = "http://localhost:8001"
     ENABLE_VOICESTUDIO: bool = False
 
+    # Internal Auth & Service URLs
+    INTERNAL_API_KEY: str = "development_internal_api_key_123"
+    BACKEND_URL: str = "http://cineforge-backend:3000"
+    REDIS_URL: str = ""
+
+    # Object Storage (MinIO / S3)
+    STORAGE_MODE: str = "local"  # "minio" | "local"
+    MINIO_ENDPOINT: str = ""
+    MINIO_PORT: int = 9000
+    MINIO_ACCESS_KEY: str = ""
+    MINIO_SECRET_KEY: str = ""
+    MINIO_USE_SSL: bool = False
+
     # HyperFrames Configuration
     ENABLE_SUBTITLES: bool = True
     ENABLE_TITLE_CARD: bool = False
@@ -48,17 +63,12 @@ class Settings(BaseSettings):
     TITLE_CARD_DURATION_SEC: float = 3.5
     CREDITS_CARD_DURATION_SEC: float = 3.0
 
-    # Provider Clip & Video Pipeline Specs
+    # Provider Clip & Video Pipeline Specs (single source of truth)
     PROVIDER_CLIP_SECONDS: float = 5.0
-    PROVIDER_CLIP_DURATION_SEC: float = 5.0
-    PROVIDER_CLIP_LENGTH_SEC: float = 5.0
     ALLOWED_CLIP_SECONDS: list[float] = [4.0, 5.0, 6.0, 8.0]
     MAX_SLOWMO_FACTOR: float = 1.25
     MAX_WORDS_PER_SECOND: float = 2.5
-
-    TARGET_FPS: int = 24
-    TARGET_WIDTH: int = 1280
-    TARGET_HEIGHT: int = 720
+    VIDEO_CONCURRENCY_LIMIT: int = 2
 
     VIDEO_FPS: int = 24
     VIDEO_WIDTH: int = 1280
@@ -81,8 +91,29 @@ class Settings(BaseSettings):
     ALLOW_STATIC_FALLBACK: bool = False
     FFMPEG_TIMEOUT_SEC: int = 600
 
+    @property
+    def PROVIDER_CLIP_DURATION_SEC(self) -> float:
+        return self.PROVIDER_CLIP_SECONDS
+
+    @property
+    def PROVIDER_CLIP_LENGTH_SEC(self) -> float:
+        return self.PROVIDER_CLIP_SECONDS
+
+    @property
+    def TARGET_FPS(self) -> int:
+        return self.VIDEO_FPS
+
+    @property
+    def TARGET_WIDTH(self) -> int:
+        return self.VIDEO_WIDTH
+
+    @property
+    def TARGET_HEIGHT(self) -> int:
+        return self.VIDEO_HEIGHT
+
     class Config:
         env_file = ".env"
         extra = "ignore"
+
 
 settings = Settings()

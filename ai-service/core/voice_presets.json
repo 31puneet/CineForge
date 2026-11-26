@@ -1,0 +1,44 @@
+{
+  "role_overrides": [
+    {
+      "keywords": ["pd", "police", "dispatch", "enforcer"],
+      "voice": "en-US-BrianNeural",
+      "pitch": "+4Hz",
+      "rate": "+6%",
+      "label": "Tactical Radio Dispatcher (Male)",
+      "gender": "male"
+    },
+    {
+      "keywords": ["ren", "vance"],
+      "voice": "en-US-ChristopherNeural",
+      "pitch": "-12Hz",
+      "rate": "-4%",
+      "label": "Gritty Cyber-Detective (Male)",
+      "gender": "male"
+    },
+    {
+      "keywords": ["iris", "ax-9"],
+      "voice": "en-US-AvaNeural",
+      "pitch": "+2Hz",
+      "rate": "-1%",
+      "label": "Fugitive Android (Female)",
+      "gender": "female"
+    }
+  ],
+  "character_voice_presets": {
+    "appu": {"voice": "en-US-AnaNeural", "pitch": "+16Hz", "rate": "+6%", "label": "Appu (Baby Elephant)", "gender": "male"},
+    "chintu": {"voice": "en-US-EricNeural", "pitch": "+12Hz", "rate": "+10%", "label": "Chintu (Tiger Cub)", "gender": "male"},
+    "doraemon": {"preset": "doraemon"},
+    "nobita": {"preset": "nobita"},
+    "shizuka": {"preset": "anime_shizuka"},
+    "gian": {"preset": "anime_gian"},
+    "takeshi": {"preset": "anime_gian"},
+    "suneo": {"preset": "anime_suneo"},
+    "solaris": {"preset": "male_hero"},
+    "malakor": {"preset": "male_villain"},
+    "shadow": {"preset": "female_mystic"},
+    "weaver": {"preset": "female_mystic"},
+    "titaness": {"preset": "female_warrior"},
+    "aero": {"preset": "male_speed"}
+  }
+}

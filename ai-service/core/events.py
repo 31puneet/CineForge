@@ -1,6 +1,5 @@
 import asyncio
 import json
-from typing import Any
 
 _event_queues: dict[str, asyncio.Queue] = {}
 _approval_events: dict[str, asyncio.Event] = {}

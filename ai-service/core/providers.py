@@ -1,10 +1,24 @@
 from abc import ABC, abstractmethod
 from typing import Any, Optional
+import asyncio
 import json
 import os
 import re
+import time
+from pathlib import Path
+from pydantic import ValidationError
 from langchain_google_genai import ChatGoogleGenerativeAI
 from core.config import settings
+
+_VOICE_PRESETS_PATH = Path(__file__).resolve().parent / "voice_presets.json"
+
+def load_voice_presets_config() -> dict:
+    try:
+        if _VOICE_PRESETS_PATH.exists():
+            return json.loads(_VOICE_PRESETS_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return {"role_overrides": [], "character_voice_presets": {}}
 
 def extract_text_content(content: Any) -> str:
     """Extract plain text from LLM response or stream chunk content, which may be str or list of dicts."""
@@ -36,10 +50,6 @@ class BaseLLMProvider(ABC):
     def get_structured_output(self, prompt: str, schema: Any, **kwargs) -> Any:
         pass
 
-
-import asyncio
-import time
-from pydantic import ValidationError
 
 DEFAULT_GEMINI_FALLBACKS = [
     "gemini-3.8-flash",
@@ -558,43 +568,14 @@ class EdgeTTSAudioAdapter(BaseAudioProvider):
             elif re.search(male_pattern, desc_lower):
                 is_female = False
 
-        # 2. Match specific iconic anime & cartoon characters
-        if "appu" in name_lower or "elephant" in name_lower:
-            return {
-                "voice": "en-US-AnaNeural",
-                "pitch": "+16Hz",
-                "rate": "+6%",
-                "label": "Appu (Baby Elephant)",
-                "gender": "male"
-            }
-        elif "chintu" in name_lower or "tiger" in name_lower or "cub" in name_lower:
-            return {
-                "voice": "en-US-EricNeural",
-                "pitch": "+12Hz",
-                "rate": "+10%",
-                "label": "Chintu (Tiger Cub)",
-                "gender": "male"
-            }
-        elif "doraemon" in name_lower:
-            return self.VOICE_PRESETS["doraemon"]
-        elif "nobita" in name_lower:
-            return self.VOICE_PRESETS["nobita"]
-        elif "shizuka" in name_lower:
-            return self.VOICE_PRESETS["anime_shizuka"]
-        elif "gian" in name_lower or "takeshi" in name_lower:
-            return self.VOICE_PRESETS["anime_gian"]
-        elif "suneo" in name_lower:
-            return self.VOICE_PRESETS["anime_suneo"]
-        elif "solaris" in name_lower:
-            return self.VOICE_PRESETS["male_hero"]
-        elif "malakor" in name_lower:
-            return self.VOICE_PRESETS["male_villain"]
-        elif "shadow" in name_lower or "weaver" in name_lower:
-            return self.VOICE_PRESETS["female_mystic"]
-        elif "titaness" in name_lower:
-            return self.VOICE_PRESETS["female_warrior"]
-        elif "aero" in name_lower:
-            return self.VOICE_PRESETS["male_speed"]
+        # 2. Match configured character voice presets from voice_presets.json
+        presets_cfg = load_voice_presets_config().get("character_voice_presets", {})
+        for key, cfg in presets_cfg.items():
+            if key in name_lower:
+                if "preset" in cfg and cfg["preset"] in self.VOICE_PRESETS:
+                    return self.VOICE_PRESETS[cfg["preset"]]
+                if "voice" in cfg:
+                    return dict(cfg)
 
         # 3. Match cartoon mascot / robotic cat traits
         if any(w in desc_lower for w in ["robot cat", "mascot", "earless", "robotic cat", "cartoon cat"]):
@@ -849,15 +830,8 @@ class VoiceStudioAudioAdapter(BaseAudioProvider):
 
     def match_character_voice(self, char_name: str, char_role: str = "", description: str = "", gender: str = "") -> dict:
         name_lower = char_name.lower().strip()
-        if "appu" in name_lower or "elephant" in name_lower:
-            prompt = "A squeaky, cheerful 4-year-old baby elephant with playful giggles and warm tone"
-            fallback = {"voice": "en-US-AnaNeural", "pitch": "+16Hz", "rate": "+6%", "label": "Appu (VoiceStudio / Baby Elephant)", "gender": "male"}
-        elif "chintu" in name_lower or "tiger" in name_lower:
-            prompt = "An energetic, feisty baby tiger cub with a raspy laugh and high-pitched excitement"
-            fallback = {"voice": "en-US-EricNeural", "pitch": "+12Hz", "rate": "+10%", "label": "Chintu (VoiceStudio / Tiger Cub)", "gender": "male"}
-        else:
-            prompt = f"Expressive voice for {char_name}: {char_role}, {description}"
-            fallback = self._fallback_provider.match_character_voice(char_name, char_role, description, gender)
+        prompt = f"Expressive voice for {char_name}: {char_role}, {description}".strip()
+        fallback = self._fallback_provider.match_character_voice(char_name, char_role, description, gender)
 
         return {
             "voice": name_lower.replace(" ", "_"),

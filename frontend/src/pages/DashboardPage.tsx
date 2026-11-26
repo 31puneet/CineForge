@@ -22,19 +22,20 @@ import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { CreateProjectModal } from '../components/dashboard/CreateProjectModal';
 import { EditProjectModal } from '../components/dashboard/EditProjectModal';
+import type { Project } from '../types/workflow';
 import strings from '../constants/strings.json';
 
 export default function DashboardPage() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('projects');
   
-  const { projects, isLoading, isCreating, createProject, deleteProject, updateProject } = useProjects();
+  const { projects, isLoading, isCreating, error, createProject, deleteProject, updateProject } = useProjects();
   const { user, logout } = useAuth();
   const { isDark, toggleTheme } = useTheme();
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
-  const [editingProject, setEditingProject] = useState<any>(null);
+  const [editingProject, setEditingProject] = useState<Project | null>(null);
 
   const handleCreate = async (title: string) => {
     const project = await createProject(title);
@@ -210,6 +211,11 @@ export default function DashboardPage() {
         </header>
 
         <div className="px-10 py-4">
+          {error && (
+            <div className="mb-4 px-4 py-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-500 text-sm">
+              {error}
+            </div>
+          )}
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 pb-12 mt-4">
             
             <div 
@@ -232,10 +238,13 @@ export default function DashboardPage() {
             {isLoading ? (
               <div className="col-span-full text-center py-12 text-stone-400">Loading projects...</div>
             ) : (
-              projects.map((project) => (
+              projects.map((project) => {
+                const projectId = project._id || project.id;
+                if (!projectId) return null;
+                return (
                 <div 
-                  key={project._id || project.id} 
-                  onClick={() => navigate(`/project/${project._id || project.id}`)}
+                  key={projectId} 
+                  onClick={() => navigate(`/project/${projectId}`)}
                   className={`aspect-video border rounded-2xl relative group cursor-pointer transition-all p-6 flex flex-col justify-between shadow-xs ${
                     isDark
                       ? 'bg-[#101420] border-white/10 hover:border-orange-500/60 hover:bg-[#141926] hover:shadow-xl hover:shadow-black/40'
@@ -249,7 +258,7 @@ export default function DashboardPage() {
                     <button 
                       onClick={(e) => {
                         e.stopPropagation();
-                        setActiveDropdown(activeDropdown === (project._id || project.id) ? null : (project._id || project.id));
+                        setActiveDropdown(activeDropdown === projectId ? null : projectId);
                       }}
                       className={`p-1.5 rounded-lg transition-colors ${
                         isDark ? 'text-slate-400 hover:text-white hover:bg-white/10' : 'text-stone-400 hover:text-stone-700 hover:bg-stone-100'
@@ -258,7 +267,7 @@ export default function DashboardPage() {
                       <MoreHorizontal className="w-5 h-5" />
                     </button>
 
-                    {activeDropdown === (project._id || project.id) && (
+                    {activeDropdown === projectId && (
                       <div className={`absolute top-10 right-0 w-32 border shadow-xl rounded-xl overflow-hidden z-10 ${
                         isDark ? 'bg-[#181D2C] border-white/15 text-slate-200' : 'bg-white border-stone-200 text-stone-700'
                       }`}>
@@ -275,7 +284,7 @@ export default function DashboardPage() {
                           <Edit2 className="w-4 h-4" /> Edit
                         </button>
                         <button 
-                          onClick={(e) => handleDelete(e, project._id || project.id)}
+                          onClick={(e) => handleDelete(e, projectId)}
                           className={`w-full text-left px-4 py-2 text-sm text-red-500 flex items-center gap-2 transition-colors ${
                             isDark ? 'hover:bg-red-500/10' : 'hover:bg-red-50'
                           }`}
@@ -300,7 +309,8 @@ export default function DashboardPage() {
                     </div>
                   </div>
                 </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>
@@ -314,6 +324,7 @@ export default function DashboardPage() {
       />
 
       <EditProjectModal 
+        key={editingProject?._id || editingProject?.id || 'edit-project-modal'}
         project={editingProject} 
         onClose={() => setEditingProject(null)} 
         onEdit={updateProject} 

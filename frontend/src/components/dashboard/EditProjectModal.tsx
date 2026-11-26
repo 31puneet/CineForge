@@ -1,29 +1,25 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { X } from 'lucide-react';
 import { useTheme } from '../../context/ThemeContext';
+import type { Project } from '../../types/workflow';
 
 interface EditProjectModalProps {
-  project: any | null;
+  project: Project | null;
   onClose: () => void;
-  onEdit: (id: string, updates: any) => Promise<void>;
+  onEdit: (id: string, updates: Partial<Pick<Project, 'title' | 'status' | 'settings'>>) => Promise<void>;
 }
 
 export function EditProjectModal({ project, onClose, onEdit }: EditProjectModalProps) {
-  const [title, setTitle] = useState('');
+  const [title, setTitle] = useState(project?.title || '');
   const { isDark } = useTheme();
-
-  useEffect(() => {
-    if (project) {
-      setTitle(project.title);
-    }
-  }, [project]);
 
   if (!project) return null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!title.trim()) return;
-    await onEdit(project._id || project.id, { title });
+    const projectId = project._id || project.id;
+    if (!title.trim() || !projectId) return;
+    await onEdit(projectId, { title });
     onClose();
   };
 

@@ -1,10 +1,12 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Header, Depends
 from pydantic import BaseModel
 from typing import Dict, Any, Optional
 import asyncio
+import copy
+import hmac
 import json
+import logging
 import re
-import traceback
 import os
 from pathlib import Path
 from langchain_core.messages import HumanMessage, AIMessage
@@ -12,10 +14,20 @@ from fastapi.responses import StreamingResponse
 
 from agents.graph import app as graph_app
 from schemas.state import FilmGraphState
+from core.config import settings
 from core.events import WorkflowEventEmitter, get_event_queue, respond_to_approval
+from core.storage import media_storage
 
-router = APIRouter(prefix="/workflow", tags=["workflow"])
+logger = logging.getLogger("cineforge.workflow")
+
+async def verify_internal_api_key(x_internal_api_key: Optional[str] = Header(default=None)):
+    expected = settings.INTERNAL_API_KEY
+    if expected and (not x_internal_api_key or not hmac.compare_digest(x_internal_api_key, expected)):
+        raise HTTPException(status_code=401, detail="Unauthorized internal access")
+
+router = APIRouter(prefix="/workflow", tags=["workflow"], dependencies=[Depends(verify_internal_api_key)])
 _project_locks: Dict[str, asyncio.Lock] = {}
+_active_tasks: Dict[str, asyncio.Task] = {}
 
 def _get_project_lock(project_id: str) -> asyncio.Lock:
     lock = _project_locks.get(project_id)
@@ -48,6 +60,12 @@ class RegenerateVoiceoverRequest(BaseModel):
 class RegenerateShotRequest(BaseModel):
     project_id: str
     shot_id: str
+    feedback: Optional[str] = None
+
+class ApproveShotRequest(BaseModel):
+    project_id: str
+    shot_id: str
+    approved: bool
     feedback: Optional[str] = None
 
 STATE_CACHE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".state_cache"))
@@ -158,25 +176,33 @@ def are_video_shots_valid(state: Dict[str, Any]) -> bool:
 async def start_workflow(req: StartWorkflowRequest):
     cached = load_persisted_state(req.project_id)
     
-    # Process potential attachments
+    # Process potential attachments with size & scheme guards
+    MAX_ATTACHMENT_B64_CHARS = 14_000_000
     content_blocks = [{"type": "text", "text": req.user_prompt}]
     if req.metadata and "attachments" in req.metadata:
         for att in req.metadata["attachments"]:
+            att_url = att.get("url", "")
+            if not isinstance(att_url, str) or len(att_url) > MAX_ATTACHMENT_B64_CHARS:
+                raise HTTPException(status_code=400, detail="Attachment exceeds maximum allowed size")
+
             mime_type = "unknown"
-            if "data:" in att.get("url", ""):
-                mime_type = att["url"].split(";")[0].replace("data:", "")
-                
+            if att_url.startswith("data:") and ";" in att_url:
+                mime_type = att_url.split(";")[0].replace("data:", "")
+
             if att.get("type") == "image_url" or "image/" in mime_type:
+                if not (att_url.startswith("data:image/") or att_url.startswith("https://")):
+                    raise HTTPException(status_code=400, detail="Invalid image attachment URL scheme")
                 content_blocks.append({
                     "type": "image_url",
-                    "image_url": {"url": att.get("url")}
+                    "image_url": {"url": att_url}
                 })
             else:
                 try:
-                    import base64, io
-                    b64_str = att.get("url", "")
-                    if "," in b64_str:
-                        b64_str = b64_str.split(",", 1)[1]
+                    import base64
+                    import io
+                    b64_str = att_url.split(",", 1)[1] if "," in att_url else att_url
+                    if len(b64_str) > MAX_ATTACHMENT_B64_CHARS:
+                        raise HTTPException(status_code=400, detail="Attachment payload too large")
                     file_bytes = base64.b64decode(b64_str)
                     
                     extracted_text = ""
@@ -199,8 +225,10 @@ async def start_workflow(req: StartWorkflowRequest):
                             "type": "text",
                             "text": f"\n\n[Content from attached file '{att.get('name', 'document')}']:\n{extracted_text}\n"
                         })
+                except HTTPException:
+                    raise
                 except Exception as e:
-                    print(f"Failed to extract document {att.get('name')}: {e}")
+                    logger.warning("Failed to extract document %s: %s", att.get("name"), e)
 
     prompt_clean = req.user_prompt.strip().lower().rstrip(".!")
     approval_keywords = {
@@ -318,23 +346,23 @@ async def start_workflow(req: StartWorkflowRequest):
             save_persisted_state(req.project_id, final_state)
             await update_state(final_state)
         except Exception as e:
-            # Send error event
-            traceback.print_exc()
-            print(f"Graph execution failed: {e}")
+            logger.exception("Graph execution failed for project %s", req.project_id)
             err_str = str(e)
             if "503" in err_str or "high demand" in err_str.lower() or "unavailable" in err_str.lower():
                 friendly_msg = "The AI service is temporarily experiencing high demand from Google. Please try again in a few moments."
             elif "429" in err_str or "quota" in err_str.lower() or "resource_exhausted" in err_str.lower():
                 friendly_msg = "Rate limit reached. Please wait a few moments and try again."
             else:
-                friendly_msg = err_str
+                friendly_msg = "Workflow execution failed. Please check logs or retry."
             await emitter.push("error", content=friendly_msg)
         finally:
+            _active_tasks.pop(req.project_id, None)
             await emitter.push("done")
 
-
-    # Start graph in background
-    asyncio.create_task(run_graph())
+    # Avoid launching duplicate concurrent graph tasks for the same project
+    existing_task = _active_tasks.get(req.project_id)
+    if existing_task is None or existing_task.done():
+        _active_tasks[req.project_id] = asyncio.create_task(run_graph())
 
     async def event_stream():
         queue = get_event_queue(req.project_id)
@@ -350,12 +378,12 @@ async def start_workflow(req: StartWorkflowRequest):
                 if event.get("type") == "done" or event.get("type") == "error":
                     break
             except asyncio.TimeoutError:
-                # Send heartbeat
                 yield json.dumps({"type": "ping"}) + "\n"
             except asyncio.CancelledError:
                 break
-            except Exception as e:
-                yield json.dumps({"type": "error", "content": str(e)}) + "\n"
+            except Exception:
+                logger.exception("Stream error for project %s", req.project_id)
+                yield json.dumps({"type": "error", "content": "Workflow stream failed"}) + "\n"
                 break
 
     return StreamingResponse(event_stream(), media_type="application/x-ndjson")
@@ -363,31 +391,64 @@ async def start_workflow(req: StartWorkflowRequest):
 @router.post("/respond")
 @router.post("/approve")
 async def respond_approval(req: RespondApprovalRequest):
-    respond_to_approval(req.project_id, req.approved, req.reason)
     async with _get_project_lock(req.project_id):
         cached = load_persisted_state(req.project_id)
-        if cached:
-            approval_states = cached.setdefault("approval_states", {})
-            if req.approved:
-                if not approval_states.get("script_approved") and cached.get("script_data"):
-                    approval_states["script_approved"] = True
-                elif not approval_states.get("characters_approved") and cached.get("characters"):
-                    approval_states["characters_approved"] = True
-                elif not approval_states.get("voiceovers_approved") and cached.get("voiceovers"):
-                    approval_states["voiceovers_approved"] = True
-                elif not approval_states.get("video_approved") and cached.get("video_shots"):
-                    if are_video_shots_valid(cached):
-                        approval_states["video_approved"] = True
-                    else:
-                        approval_states["video_approved"] = False
-                        cached["current_stage"] = "video"
-                elif cached.get("current_stage") == "editor_failed":
-                    if are_video_shots_valid(cached):
-                        approval_states["video_approved"] = True
-                    else:
-                        approval_states["video_approved"] = False
-                        cached["current_stage"] = "video"
-            save_persisted_state(req.project_id, cached)
+        if not cached:
+            raise HTTPException(status_code=404, detail="Workflow not found for this project")
+
+        approval_states = cached.setdefault("approval_states", {})
+        if req.approved:
+            if not approval_states.get("script_approved") and cached.get("script_data"):
+                approval_states["script_approved"] = True
+            elif not approval_states.get("characters_approved") and cached.get("characters"):
+                approval_states["characters_approved"] = True
+            elif not approval_states.get("voiceovers_approved") and cached.get("voiceovers"):
+                approval_states["voiceovers_approved"] = True
+            elif not approval_states.get("video_approved") and cached.get("video_shots"):
+                if are_video_shots_valid(cached):
+                    for s in cached.get("video_shots", []):
+                        s["approved"] = True
+                    approval_states["video_approved"] = True
+                else:
+                    approval_states["video_approved"] = False
+                    cached["current_stage"] = "video"
+            elif not approval_states.get("assembly_confirmed"):
+                approval_states["assembly_confirmed"] = True
+            elif cached.get("current_stage") in ("editor_failed", "editor_qc_failed"):
+                if are_video_shots_valid(cached):
+                    approval_states["video_approved"] = True
+                    approval_states["assembly_confirmed"] = True
+                else:
+                    approval_states["video_approved"] = False
+                    cached["current_stage"] = "video"
+        save_persisted_state(req.project_id, cached)
+
+    respond_to_approval(req.project_id, req.approved, req.reason)
+
+    # If the graph paused at END (e.g. after server restart or previous stop), resume it cleanly
+    existing_task = _active_tasks.get(req.project_id)
+    if req.approved and (existing_task is None or existing_task.done()):
+        emitter = WorkflowEventEmitter(req.project_id)
+        config = {"configurable": {"thread_id": req.project_id, "emitter": emitter}}
+
+        async def _resume_sync(s):
+            save_persisted_state(req.project_id, s)
+
+        config["configurable"]["update_state"] = _resume_sync
+
+        async def _resume_graph():
+            try:
+                final_state = await graph_app.ainvoke(cached, config)
+                save_persisted_state(req.project_id, final_state)
+            except Exception:
+                logger.exception("Resumed graph failed for project %s", req.project_id)
+                await emitter.push("error", content="Failed to resume workflow")
+            finally:
+                _active_tasks.pop(req.project_id, None)
+                await emitter.push("done")
+
+        _active_tasks[req.project_id] = asyncio.create_task(_resume_graph())
+
     return {"status": "ok"}
 
 @router.post("/regenerate-character")
@@ -397,7 +458,7 @@ async def regenerate_character(req: RegenerateCharacterRequest):
         raise HTTPException(status_code=404, detail="Workflow not found for this project")
     
     characters = state.get("characters", [])
-    target_char = next((c for c in characters if c["id"] == req.character_id), None)
+    target_char = next((c for c in characters if c.get("id") == req.character_id or c.get("character_id") == req.character_id), None)
     if not target_char:
         raise HTTPException(status_code=404, detail=f"Character {req.character_id} not found")
     
@@ -417,23 +478,69 @@ Output ONLY the revised 8K cinematic concept portrait prompt, with no extra conv
             new_prompt = adapter.generate_text(prompt)
             target_char["image_prompt"] = new_prompt.strip()
         except Exception as e:
-            print(f"LLM prompt refinement skipped due to: {e}")
+            logger.warning("LLM prompt refinement skipped: %s", e)
             target_char["image_prompt"] = f"{target_char.get('image_prompt', target_char['name'])}, {req.feedback}"
 
     import random
+    import base64
+    import httpx
     new_seed = random.randint(100000, 999999)
     new_url = await image_adapter.generate_image(target_char.get("image_prompt", target_char["name"]), seed=new_seed)
+
+    new_version = int(state.get("character_version", 0)) + 1
+    renders_dir = _get_renders_dir(req.project_id)
+    char_file = os.path.join(renders_dir, f"{req.character_id}.jpg")
+    if new_url and new_url.startswith("data:image") and "base64," in new_url:
+        raw_b = base64.b64decode(new_url.split("base64,", 1)[1])
+        if len(raw_b) > 1000:
+            with open(char_file, "wb") as f_out:
+                f_out.write(raw_b)
+            new_url = media_storage.upload_file(
+                char_file,
+                project_id=req.project_id,
+                object_key=f"projects/{req.project_id}/characters/{req.character_id}/v{new_version}/image.jpg",
+                bucket="cineforge-assets",
+                content_type="image/jpeg",
+                asset_type="image",
+                character_id=req.character_id,
+                version=new_version,
+            )
+    elif new_url and new_url.startswith("http"):
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            r = await client.get(new_url)
+            if r.status_code == 200 and len(r.content) > 1000:
+                with open(char_file, "wb") as f_out:
+                    f_out.write(r.content)
+                new_url = media_storage.upload_file(
+                    char_file,
+                    project_id=req.project_id,
+                    object_key=f"projects/{req.project_id}/characters/{req.character_id}/v{new_version}/image.jpg",
+                    bucket="cineforge-assets",
+                    content_type="image/jpeg",
+                    asset_type="image",
+                    character_id=req.character_id,
+                    version=new_version,
+                )
+
     target_char["image_url"] = new_url
 
     async with _get_project_lock(req.project_id):
         latest = load_persisted_state(req.project_id) or state
-        for idx, c in enumerate(latest.get("characters", [])):
-            if c.get("id") == req.character_id:
-                latest["characters"][idx] = target_char
+        latest_chars = latest.get("characters", [])
+        for idx, c in enumerate(latest_chars):
+            if c.get("id") == req.character_id or c.get("character_id") == req.character_id:
+                latest_chars[idx] = target_char
                 break
+        latest["characters"] = latest_chars
+        latest["character_version"] = int(latest.get("character_version", 0)) + 1
+        history = latest.setdefault("character_history", [])
+        history.append({
+            "version": latest["character_version"],
+            "data": copy.deepcopy({"characters": latest_chars}),
+        })
         save_persisted_state(req.project_id, latest)
 
-    return {"status": "ok", "character": target_char}
+    return {"status": "ok", "character": target_char, "character_version": latest["character_version"]}
 
 @router.post("/regenerate-voiceover")
 async def regenerate_voiceover(req: RegenerateVoiceoverRequest):
@@ -442,11 +549,12 @@ async def regenerate_voiceover(req: RegenerateVoiceoverRequest):
         raise HTTPException(status_code=404, detail="Workflow not found for this project")
     
     voiceovers = state.get("voiceovers", [])
-    target_vo = next((v for v in voiceovers if v["shot_id"] == req.shot_id), None)
+    target_vo = next((v for v in voiceovers if v.get("shot_id") == req.shot_id), None)
     if not target_vo:
         raise HTTPException(status_code=404, detail=f"Voiceover for shot {req.shot_id} not found")
     
     from core.providers import get_audio_provider
+    from core.media_processor import probe
     tts = get_audio_provider()
     
     text = req.dialogue or target_vo.get("dialogue", "")
@@ -460,7 +568,21 @@ async def regenerate_voiceover(req: RegenerateVoiceoverRequest):
         b64_part = new_audio_url.split("base64,", 1)[1]
         with open(audio_disk_path, "wb") as af:
             af.write(base64.b64decode(b64_part))
-        new_audio_url = f"/renders/{req.project_id}/audio_{req.shot_id}.mp3"
+        try:
+            a_info = probe(audio_disk_path)
+            if a_info.duration > 0:
+                target_vo["duration_seconds"] = round(a_info.duration, 2)
+        except Exception:
+            pass
+        new_audio_url = media_storage.upload_file(
+            audio_disk_path,
+            project_id=req.project_id,
+            object_key=f"projects/{req.project_id}/voiceovers/{req.shot_id}/v2/audio.mp3",
+            bucket="cineforge-assets",
+            content_type="audio/mpeg",
+            asset_type="audio",
+            version=2,
+        )
 
     target_vo["audio_url"] = new_audio_url
     if req.dialogue:
@@ -479,6 +601,39 @@ async def regenerate_voiceover(req: RegenerateVoiceoverRequest):
 
     return {"status": "ok", "voiceover": target_vo}
 
+@router.post("/approve-shot")
+async def approve_shot(req: ApproveShotRequest):
+    async with _get_project_lock(req.project_id):
+        state = load_persisted_state(req.project_id)
+        if not state:
+            raise HTTPException(status_code=404, detail="Workflow not found for this project")
+
+        video_shots = state.get("video_shots", [])
+        target_shot = next((s for s in video_shots if s.get("shot_id") == req.shot_id), None)
+        if not target_shot:
+            raise HTTPException(status_code=404, detail=f"Shot {req.shot_id} not found")
+
+        if req.approved and target_shot.get("status") != "completed":
+            raise HTTPException(status_code=400, detail=f"Shot {req.shot_id} is not completed and cannot be approved")
+
+        target_shot["approved"] = req.approved
+        if not req.approved and req.feedback:
+            target_shot["error_message"] = req.feedback
+
+        all_approved = bool(video_shots) and all(
+            s.get("approved") is True and s.get("status") == "completed"
+            for s in video_shots
+        )
+        approval_states = state.setdefault("approval_states", {})
+        approval_states["video_approved"] = all_approved
+        save_persisted_state(req.project_id, state)
+
+    return {
+        "status": "ok",
+        "shot": target_shot,
+        "video_approved": all_approved,
+    }
+
 @router.post("/regenerate-shot")
 async def regenerate_shot(req: RegenerateShotRequest):
     state = load_persisted_state(req.project_id)
@@ -486,7 +641,7 @@ async def regenerate_shot(req: RegenerateShotRequest):
         raise HTTPException(status_code=404, detail="Workflow not found for this project")
     
     video_shots = state.get("video_shots", [])
-    target_shot = next((s for s in video_shots if s["shot_id"] == req.shot_id), None)
+    target_shot = next((s for s in video_shots if s.get("shot_id") == req.shot_id), None)
     if not target_shot:
         raise HTTPException(status_code=404, detail=f"Shot {req.shot_id} not found")
     
@@ -494,11 +649,9 @@ async def regenerate_shot(req: RegenerateShotRequest):
 
     from core.video_generator import generate_ai_video_clip, QuotaExceededError
     from core.media_processor import FFMPEG_BIN, probe
-    from core.config import settings
 
     shot_img = os.path.join(renders_dir, f"{req.shot_id}_scene.jpg")
     if not os.path.exists(shot_img):
-        # Fallback to any character or default
         for f in os.listdir(renders_dir):
             if f.endswith((".jpg", ".png")) and "thumb" not in f:
                 shot_img = os.path.join(renders_dir, f)
@@ -508,6 +661,8 @@ async def regenerate_shot(req: RegenerateShotRequest):
     raw_clip_out = os.path.join(renders_dir, f"{req.shot_id}_raw.mp4")
     final_clip_out = os.path.join(renders_dir, f"{req.shot_id}.mp4")
     shot_dur = float(target_shot.get("duration_sec") or target_shot.get("duration_seconds") or settings.PROVIDER_CLIP_SECONDS)
+    next_version = int(target_shot.get("version") or 1) + 1
+    ai_clip = None
 
     try:
         ai_clip = await asyncio.to_thread(
@@ -521,7 +676,7 @@ async def regenerate_shot(req: RegenerateShotRequest):
         )
         if not ai_clip or not os.path.exists(ai_clip):
             raise RuntimeError("Video generation produced no clip")
-        clip_info = probe(ai_clip)
+        clip_info = await asyncio.to_thread(probe, ai_clip)
         if not clip_info.has_video:
             raise RuntimeError("Output clip has no video stream")
         if clip_info.duration <= 0.5 or (clip_info.fps is not None and clip_info.fps <= 1.0):
@@ -529,7 +684,8 @@ async def regenerate_shot(req: RegenerateShotRequest):
         if clip_info.duration < 3.0:
             raise RuntimeError(f"Clip too short: {clip_info.duration:.2f}s < 3.00s")
 
-        import shutil, subprocess
+        import shutil
+        import subprocess
         shutil.copyfile(ai_clip, raw_clip_out)
         if clip_info.duration > shot_dur + 0.1:
             trim_cmd = [FFMPEG_BIN, "-y", "-i", ai_clip, "-t", str(shot_dur), "-c", "copy", final_clip_out]
@@ -543,33 +699,57 @@ async def regenerate_shot(req: RegenerateShotRequest):
                 res = await asyncio.to_thread(lambda: subprocess.run(reencode_cmd, capture_output=True))
             if res.returncode != 0 or not os.path.exists(final_clip_out):
                 raise RuntimeError(f"Failed to trim regenerated shot to {shot_dur:.2f}s")
-            final_info = probe(final_clip_out)
+            final_info = await asyncio.to_thread(probe, final_clip_out)
             real_dur = round(final_info.duration, 3) if final_info.duration > 0 else shot_dur
         else:
             shutil.copyfile(ai_clip, final_clip_out)
             real_dur = round(clip_info.duration, 3)
 
+        thumb_path = os.path.join(renders_dir, f"thumb_{req.shot_id}.jpg")
+        await asyncio.to_thread(
+            lambda: subprocess.run([FFMPEG_BIN, "-y", "-ss", "00:00:01", "-i", final_clip_out, "-vframes", "1", thumb_path], capture_output=True)
+        )
+
         target_shot["status"] = "completed"
-        target_shot["video_url"] = f"/renders/{req.project_id}/{req.shot_id}.mp4"
+        target_shot["approved"] = False
+        target_shot["version"] = next_version
+        target_shot["video_url"] = media_storage.upload_file(
+            final_clip_out,
+            project_id=req.project_id,
+            object_key=f"projects/{req.project_id}/clips/{req.shot_id}/v{next_version}/video.mp4",
+            bucket="cineforge-renders",
+            content_type="video/mp4",
+            asset_type="video",
+            version=next_version,
+        )
+        if os.path.exists(thumb_path):
+            target_shot["thumbnail_url"] = media_storage.upload_file(
+                thumb_path,
+                project_id=req.project_id,
+                object_key=f"projects/{req.project_id}/clips/{req.shot_id}/v{next_version}/thumb.jpg",
+                bucket="cineforge-renders",
+                content_type="image/jpeg",
+                asset_type="image",
+                version=next_version,
+            )
         target_shot["static_fallback"] = False
         target_shot["duration_sec"] = real_dur
         target_shot["duration_seconds"] = real_dur
         target_shot["error_message"] = None
     except QuotaExceededError as qe:
         target_shot["status"] = "failed_quota"
+        target_shot["approved"] = False
         target_shot["error_message"] = str(qe)
     except Exception as e:
         target_shot["status"] = "failed"
+        target_shot["approved"] = False
         target_shot["error_message"] = str(e)
-
-    # Refresh thumbnail
-    thumb_path = os.path.join(renders_dir, f"thumb_{req.shot_id}.jpg")
-    if os.path.exists(final_clip_out):
-        import subprocess
-        await asyncio.to_thread(
-            lambda: subprocess.run([FFMPEG_BIN, "-y", "-ss", "00:00:01", "-i", final_clip_out, "-vframes", "1", thumb_path], capture_output=True)
-        )
-        target_shot["thumbnail_url"] = f"/renders/{req.project_id}/thumb_{req.shot_id}.jpg"
+    finally:
+        if ai_clip and ai_clip.startswith("/tmp") and os.path.exists(ai_clip):
+            try:
+                os.unlink(ai_clip)
+            except OSError:
+                pass
 
     async with _get_project_lock(req.project_id):
         latest = load_persisted_state(req.project_id) or state
@@ -577,7 +757,12 @@ async def regenerate_shot(req: RegenerateShotRequest):
             if s.get("shot_id") == req.shot_id:
                 latest["video_shots"][idx] = target_shot
                 break
+        latest.setdefault("approval_states", {})["video_approved"] = False
         save_persisted_state(req.project_id, latest)
+
+    if target_shot.get("status") != "completed":
+        raise HTTPException(status_code=502, detail=target_shot.get("error_message") or "Shot regeneration failed")
+
     return {"status": "ok", "shot": target_shot}
 
 @router.get("/state/{project_id}")

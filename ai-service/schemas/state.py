@@ -1,38 +1,45 @@
 from typing import TypedDict, Annotated, List, Optional, Any, Dict
 import operator
 
-# State transition stages
 STAGES = [
-    "script", 
-    "character", 
-    "voiceover", 
-    "video", 
-    "editor", 
-    "completed"
+    "script",
+    "character",
+    "voiceover",
+    "video",
+    "editor",
+    "completed",
 ]
 
-# We will use standard lists and dicts here for simplicity, 
-# appending is handled by LangGraph's Annotated.
 
-class Shot(TypedDict):
+class Shot(TypedDict, total=False):
+    shot_id: str
     id: str
+    visual_description: str
     description: str
+    duration_seconds: float
     duration_sec: float
     dialogue: str
     speaker: Optional[str]
+    characters: Optional[List[str]]
+
 
 class ScriptData(TypedDict):
     global_narrative: str
     shots: List[Shot]
 
+
 class Character(TypedDict, total=False):
     id: str
+    character_id: Optional[str]
     name: str
     role: Optional[str]
     gender: Optional[str]
     description: str
+    visual_description: Optional[str]
     image_url: Optional[str]
     image_prompt: Optional[str]
+    reference_urls: Optional[List[str]]
+
 
 class Voiceover(TypedDict, total=False):
     shot_id: str
@@ -44,6 +51,7 @@ class Voiceover(TypedDict, total=False):
     voice_id: Optional[str]
     duration_seconds: Optional[float]
 
+
 class VideoShot(TypedDict, total=False):
     shot_id: str
     video_url: str
@@ -54,35 +62,39 @@ class VideoShot(TypedDict, total=False):
     duration_seconds: Optional[float]
     duration_sec: Optional[float]
     status: Optional[str]  # queued | rendering | completed | failed | failed_quota | needs_attention
+    approved: Optional[bool]
+    version: Optional[int]
     padding_applied: Optional[str]  # loop | hold | None
     static_fallback: Optional[bool]
     error_message: Optional[str]
 
-class ApprovalStates(TypedDict):
+
+class ApprovalStates(TypedDict, total=False):
     script_approved: bool
     characters_approved: bool
     voiceovers_approved: bool
     video_approved: bool
     editor_approved: Optional[bool]
+    assembly_confirmed: Optional[bool]
 
-# The massive state object for LangGraph
+
 class FilmGraphState(TypedDict):
     project_id: str
     metadata: Dict[str, Any]
     messages: Annotated[List[Any], operator.add]
     current_stage: str
-    
+
     script_data: Optional[ScriptData]
     script_version: int
     script_history: List[Dict[str, Any]]
-    
+
     characters: List[Character]
     character_version: int
     character_history: List[Dict[str, Any]]
     voiceovers: List[Voiceover]
     video_shots: List[VideoShot]
-    
+
     final_film_url: Optional[str]
     manifest: Optional[Dict[str, Any]]
-    
+
     approval_states: ApprovalStates

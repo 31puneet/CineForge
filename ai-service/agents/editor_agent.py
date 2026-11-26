@@ -15,12 +15,9 @@ from langchain_core.runnables import RunnableConfig
 from core.config import settings
 from core.media_processor import (
     probe,
-    compute_shot_duration,
     normalize_clip,
     normalize_master_loudness,
     concat,
-    build_audio_track,
-    mux,
     mux_shot,
     verify_film,
     create_shot_subtitles_ass,
@@ -31,6 +28,7 @@ from core.media_processor import (
     ShotTooShortError
 )
 from core.media_validator import MediaValidator
+from core.storage import media_storage
 from schemas.state import FilmGraphState
 
 logger = logging.getLogger("cineforge.editor")
@@ -214,7 +212,7 @@ async def _assemble_video_locked(state: FilmGraphState, config: RunnableConfig, 
                     )
 
             try:
-                norm_result = await asyncio.to_thread(
+                await asyncio.to_thread(
                     normalize_clip,
                     src=src_clip,
                     dst=dst_clip,
@@ -349,10 +347,20 @@ async def _assemble_video_locked(state: FilmGraphState, config: RunnableConfig, 
         os.replace(tmp_master, master_film_path)
         os.replace(tmp_legacy, legacy_film_path)
 
+        master_url = media_storage.upload_file(
+            master_film_path,
+            project_id=project_id,
+            object_key=f"projects/{project_id}/final/master.mp4",
+            bucket="cineforge-renders",
+            content_type="video/mp4",
+            asset_type="video",
+            version=1,
+        )
+
         # 8. Write manifest.json
         manifest_data = {
             "project_id": project_id,
-            "master_film": f"/renders/{project_id}/master.mp4",
+            "master_film": master_url,
             "total_duration": qc_results["checks"]["duration"]["video_duration"],
             "fps": settings.VIDEO_FPS,
             "resolution": f"{settings.VIDEO_WIDTH}x{settings.VIDEO_HEIGHT}",
@@ -379,14 +387,13 @@ async def _assemble_video_locked(state: FilmGraphState, config: RunnableConfig, 
         manifest_path.write_text(json.dumps(manifest_data, indent=2), encoding="utf-8")
 
         state["manifest"] = manifest_data
-        state["final_film_url"] = f"/renders/{project_id}/master.mp4"
+        state["final_film_url"] = master_url
         state["current_stage"] = "completed"
         if "approval_states" in state:
             state["approval_states"]["editor_approved"] = True
 
         update_state_fn = config.get("configurable", {}).get("update_state")
         if update_state_fn:
-            import asyncio
             if asyncio.iscoroutinefunction(update_state_fn):
                 await update_state_fn(state)
             else:

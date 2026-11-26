@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import List, Optional, Union
+from typing import List, Optional
 
 class LLMCharacter(BaseModel):
     character_id: Optional[str] = Field(None, description="Unique character ID (e.g., 'char_1')")

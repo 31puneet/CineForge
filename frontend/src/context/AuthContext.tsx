@@ -15,7 +15,6 @@ interface AuthContextType {
   isLoading: boolean;
   logout: () => Promise<void>;
   checkAuth: () => Promise<void>;
-  loginAsGuest: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -26,45 +25,40 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const checkAuth = async () => {
     try {
-      const savedGuest = localStorage.getItem('cineforge_guest_user');
-      if (savedGuest) {
-        setUser(JSON.parse(savedGuest));
-        setIsLoading(false);
-        return;
-      }
-      const response = await apiClient.get('/auth/me');
+      const response = await apiClient.get<{ user: User }>('/auth/me');
       setUser(response.data.user);
-    } catch (error) {
-      const savedGuest = localStorage.getItem('cineforge_guest_user');
-      if (savedGuest) {
-        setUser(JSON.parse(savedGuest));
-      } else {
-        setUser(null);
-      }
+    } catch {
+      setUser(null);
     } finally {
       setIsLoading(false);
     }
   };
 
   useEffect(() => {
-    checkAuth();
+    let cancelled = false;
+    apiClient
+      .get<{ user: User }>('/auth/me')
+      .then((response) => {
+        if (!cancelled) {
+          setUser(response.data.user);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setUser(null);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  const loginAsGuest = () => {
-    const guestUser: User = {
-      id: 'guest-director-1',
-      googleId: 'guest-id',
-      email: 'director@cineforge.io',
-      name: 'Guest Director',
-      avatarUrl: 'https://api.dicebear.com/7.x/bottts/svg?seed=director',
-      role: 'user',
-    };
-    localStorage.setItem('cineforge_guest_user', JSON.stringify(guestUser));
-    setUser(guestUser);
-  };
-
   const logout = async () => {
-    localStorage.removeItem('cineforge_guest_user');
     try {
       await apiClient.post('/auth/logout');
     } catch (error) {
@@ -75,7 +69,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, logout, checkAuth, loginAsGuest }}>
+    <AuthContext.Provider value={{ user, isLoading, logout, checkAuth }}>
       {children}
     </AuthContext.Provider>
   );

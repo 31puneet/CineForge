@@ -4,7 +4,6 @@ All FFmpeg / ffprobe access lives here. Argument lists only, no shell.
 import os
 import json
 import logging
-import math
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -159,6 +158,19 @@ def format_ass_time(seconds: float) -> str:
     return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
 
 
+def _escape_ass_text(text: str) -> str:
+    """Escape ASS override braces, backslashes, and line breaks."""
+    return (
+        (text or "")
+        .replace("\\", r"\\")
+        .replace("{", r"\{")
+        .replace("}", r"\}")
+        .replace("\r\n", " ")
+        .replace("\n", " ")
+        .replace("\r", " ")
+    )
+
+
 def estimate_word_timings(
     dialogue: str,
     total_audio_duration: float,
@@ -223,7 +235,7 @@ def create_shot_subtitles_ass(
         )
         return out_p
 
-    speaker_tag = f"{speaker.strip().upper()}: " if speaker and speaker.strip() else ""
+    speaker_tag = f"{_escape_ass_text(speaker.strip().upper())}: " if speaker and speaker.strip() else ""
 
     pre_delay = settings.SHOT_PRE_DELAY_SEC
     effective_audio_dur = audio_duration or (duration - pre_delay - settings.SHOT_POST_TAIL_SEC)
@@ -240,7 +252,7 @@ def create_shot_subtitles_ass(
 
     karaoke_parts = []
     for wt in word_timings:
-        word = wt.get("word", "")
+        word = _escape_ass_text(wt.get("word", ""))
         cs = wt.get("duration_cs", 30)
         karaoke_parts.append(f"{{\\kf{cs}}}{word} ")
     animated_text = "".join(karaoke_parts).strip()
@@ -288,8 +300,8 @@ def generate_title_card(
     w, h, fps = settings.VIDEO_WIDTH, settings.VIDEO_HEIGHT, settings.VIDEO_FPS
     ass_path = dst_p.with_suffix(".ass")
 
-    clean_title = (title or "CineForge Original").upper().strip()
-    clean_sub = (subtitle or "A CineForge Original Production").strip()
+    clean_title = _escape_ass_text((title or "CineForge Original").upper().strip())
+    clean_sub = _escape_ass_text((subtitle or "A CineForge Original Production").strip())
 
     ass_content = f"""[Script Info]
 Title: CineForge Title Card
@@ -362,7 +374,7 @@ def generate_credits_card(
 
     starring_line = ""
     if characters:
-        valid_chars = [c.strip() for c in characters if c and c.strip()]
+        valid_chars = [_escape_ass_text(c.strip()) for c in characters if c and c.strip()]
         if valid_chars:
             if len(valid_chars) == 1:
                 starring_line = f"Starring {valid_chars[0]}"
@@ -961,12 +973,20 @@ def verify_film(master_path: Path | str) -> dict:
         "-vf", "freezedetect=n=-60dB:d=1.5", "-an", "-f", "null", "-"
     ]
     freeze_proc = subprocess.run(freeze_cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
-    freezes = re.findall(r"freeze_start:\s+([-\d\.]+)", freeze_proc.stderr)
-    results["checks"]["freezes"] = {
-        "passed": len(freezes) == 0,
-        "freeze_count": len(freezes),
-        "freeze_starts": freezes
-    }
-    # Note: Freezes are noted in results
+    if freeze_proc.returncode != 0:
+        results["passed"] = False
+        results["errors"].append(f"Freeze detection command failed: {freeze_proc.stderr[-300:]}")
+        results["checks"]["freezes"] = {"passed": False, "error": freeze_proc.stderr[-300:]}
+    else:
+        freezes = re.findall(r"freeze_start:\s+([-\d\.]+)", freeze_proc.stderr)
+        freeze_pass = len(freezes) == 0
+        results["checks"]["freezes"] = {
+            "passed": freeze_pass,
+            "freeze_count": len(freezes),
+            "freeze_starts": freezes
+        }
+        if not freeze_pass:
+            results["passed"] = False
+            results["errors"].append(f"Freeze check failed: detected {len(freezes)} frozen segment(s) > 1.5s")
 
     return results

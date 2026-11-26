@@ -56,175 +56,177 @@
   "landingPage": {
     "nav": {
       "logo": "CineForge",
-      "howItWorks": "How It Works",
-      "studio": "Studio Stages",
-      "features": "Superpowers",
+      "features": "Features",
+      "pipeline": "Pipeline",
       "pricing": "Pricing",
       "signIn": "Sign In"
     },
     "hero": {
-      "headline": "Your Personal AI Film Studio.",
-      "subheadline": "Direct specialized AI agents that write, cast, voice, shoot, and assemble cinema-grade films \u2014 keeping you in the director's chair from concept to final cut.",
-      "cta": "Start Directing Free",
-      "badge": "Cinema 2.0 \u2022 Screenplay to Master Film in Minutes"
+      "headline": "End-to-End AI Film Production, Engineered for Scale.",
+      "subheadline": "The industry-grade platform for professional content creators. Offering AI-powered tools for screenwriting, scene generation, cinematic rendering, and complete production management.",
+      "cta": "Start Your First Project"
     },
     "videos": [
       {
-        "title": "1. Screenplay & Beats",
+        "title": "1. Generate Scripts",
         "description": "Collaborate with the AI agent to write compelling, structural narratives.",
         "src": "/Card_1_Video.mp4"
       },
       {
-        "title": "2. Cinematic Rendering",
-        "description": "AI-powered camera motion and dynamic lighting generated per shot.",
+        "title": "2. Render Scenes",
+        "description": "AI-powered cinematic rendering directly from your script elements.",
         "src": "/Card_2_Video.mp4"
       },
       {
-        "title": "3. Automated Master Cut",
-        "description": "Seamless timeline assembly, voiceover sync, and broadcast audio.",
+        "title": "3. Assemble Video",
+        "description": "Automated assembly, transitions, voiceovers, and final rendering.",
         "src": "/Card_3_Video.mp4"
       }
     ],
     "journey": {
-      "title": "From Idea to Premiere in 3 Simple Beats",
-      "subtitle": "No crew required. No multi-month production schedules. You direct the vision, CineForge executes every technical layer.",
+      "title": "From Idea to Final Cut",
+      "subtitle": "A seamless six-step production pipeline that takes you from a blank canvas to a polished film — with AI handling the heavy lifting at every stage.",
       "steps": [
         {
           "step": "01",
-          "label": "Prompt & Direct",
-          "description": "Describe your film concept. CineForge structures it into a shot-by-shot cinematic screenplay with character dialogue and camera pacing."
+          "label": "Create Project",
+          "description": "Set up your film project with a name, duration, and creative brief."
         },
         {
           "step": "02",
-          "label": "Cast & Voice",
-          "description": "Generate unique characters with persistent visual memory across all scenes, then match them with studio-quality neural actor voices."
+          "label": "Script Generation",
+          "description": "The Script Agent structures your prompt into a shot-by-shot narrative plan."
         },
         {
           "step": "03",
-          "label": "Render & Master",
-          "description": "AI animates every shot with cinematic motion, burns synchronized subtitles, normalizes loudness to -16 LUFS, and renders a 24fps master film."
+          "label": "Character Design",
+          "description": "The Character Agent generates consistent visual characters from your script."
+        },
+        {
+          "step": "04",
+          "label": "Voiceover & Dialogue",
+          "description": "The Voiceover Agent produces dialogue audio for each character."
+        },
+        {
+          "step": "05",
+          "label": "Shot-by-Shot Rendering",
+          "description": "The Video Agent renders each scene with full cinematic quality."
+        },
+        {
+          "step": "06",
+          "label": "Final Assembly",
+          "description": "The Editor Agent stitches approved clips into a complete film."
         }
       ]
     },
-    "studioStages": {
-      "title": "Five Specialized Studio Departments",
-      "subtitle": "Click through each stage to explore how CineForge orchestrates the entire filmmaking pipeline.",
-      "stages": [
-        {
-          "id": "script",
-          "name": "Screenplay Studio",
-          "department": "Narrative & Screenplay",
-          "headline": "From a 1-Line Concept to an Industry Screenplay",
-          "description": "Transform raw creative prompts into fully realized screenplays. CineForge automatically plans scenes, shot counts, camera angles, and character dialogue allocations timed for cinematic pacing.",
-          "directorControl": "Review the full script, request tone revisions, or adjust shot pacing with natural conversational feedback.",
-          "badges": [
-            "Pacing Optimization",
-            "Shot-by-Shot Blueprint",
-            "Screenplay Formatting",
-            "Word-Timing Constraints"
-          ],
-          "color": "from-orange-600 to-amber-600",
-          "accent": "text-orange-600 bg-orange-50 border-orange-200"
-        },
-        {
-          "id": "characters",
-          "name": "Casting Studio",
-          "department": "Visual Identity & Cast",
-          "headline": "Characters with Unbreakable Visual Memory",
-          "description": "Never worry about shifting faces or changing costumes. Every character is designed with persistent visual continuity across lighting, wardrobe, and emotional expressions.",
-          "directorControl": "Approve characters individually, upload custom reference photos, or re-generate specific actors with targeted feedback.",
-          "badges": [
-            "Face Continuity",
-            "Multi-Angle Memory",
-            "Targeted Re-casting",
-            "Genre Aesthetics"
-          ],
-          "color": "from-purple-600 to-indigo-600",
-          "accent": "text-purple-600 bg-purple-50 border-purple-200"
-        },
-        {
-          "id": "voice",
-          "name": "Soundstage",
-          "department": "Voiceover & Audio",
-          "headline": "Cast Nuanced, Expressive Neural Actors",
-          "description": "Assign distinct vocal identities for every character in your ensemble. CineForge balances emotional delivery, pitch, and pacing to match dialogue lines to shot timing.",
-          "directorControl": "Preview dialogue tracks per shot, swap voice profiles, or adjust delivery cadence with instant preview.",
-          "badges": [
-            "Neural Voice Casting",
-            "Emotional Inflection",
-            "Word-Accurate Timing",
-            "Multi-Character Dialogue"
-          ],
-          "color": "from-cyan-600 to-blue-600",
-          "accent": "text-cyan-600 bg-cyan-50 border-cyan-200"
-        },
-        {
-          "id": "video",
-          "name": "Cinematography",
-          "department": "Motion & Camera",
-          "headline": "Multi-Shot Parallel Cinematic Rendering",
-          "description": "Turn keyframe designs into fluid, cinematic video clips. High-definition camera movements, depth of field, and dramatic lighting are generated in parallel without waiting in line.",
-          "directorControl": "Review each rendered shot in full resolution. Re-take any single shot without re-rendering the rest of the film.",
-          "badges": [
-            "24 FPS Motion",
-            "Parallel Generation",
-            "Per-Shot Re-takes",
-            "Dynamic Lighting"
-          ],
-          "color": "from-emerald-600 to-teal-600",
-          "accent": "text-emerald-600 bg-emerald-50 border-emerald-200"
-        },
-        {
-          "id": "editor",
-          "name": "Master Timeline",
-          "department": "Post-Production",
-          "headline": "Automated Concat, Subtitles & Broadcast Mastering",
-          "description": "Individual shots are seamlessly stitched into a unified master film with broadcast-standard EBU R128 (-16 LUFS) loudness, custom intro/credits cards, and sample-accurate subtitles.",
-          "directorControl": "Passes automated freeze, loop, and silence QC checks. Watch the master cut or download high-bitrate MP4.",
-          "badges": [
-            "-16 LUFS Loudness",
-            "Auto-Burned Subtitles",
-            "24fps CFR Standardization",
-            "Quality Gate Certified"
-          ],
-          "color": "from-amber-600 to-rose-600",
-          "accent": "text-amber-600 bg-amber-50 border-amber-200"
-        }
-      ]
-    },
-    "superpowers": {
-      "title": "Built for Filmmakers Who Want Complete Creative Control",
-      "subtitle": "Everything you need to produce cinematic content without technical friction.",
+    "agents": {
+      "title": "Five Specialized AI Agents, One Unified Pipeline",
+      "subtitle": "Each agent is purpose-built for a single production stage. They pass approved artifacts downstream in a deterministic chain — no ambiguity, no lost context.",
       "list": [
         {
-          "title": "Visual Continuity Engine",
-          "description": "Characters look like themselves across every scene. No morphing faces or random outfit swaps.",
-          "icon": "Users"
+          "name": "Script Agent",
+          "role": "Narrative Architect",
+          "input": "Prompt + References + Duration",
+          "output": "Structured Script",
+          "description": "Interprets your creative brief, identifies story elements and characters, structures the narrative into generation-ready shots, and allocates dialogue and visual descriptions according to the target duration.",
+          "details": [
+            "Parses user prompt and reference materials",
+            "Structures story into scenes and individual shots",
+            "Allocates dialogue per character per shot",
+            "Respects target duration and provider constraints",
+            "Outputs a versioned, reviewable script artifact"
+          ],
+          "approval": "You review the full script. Approve to proceed, or request revisions with specific feedback. Only the approved version flows to the next agent."
         },
         {
-          "title": "Zero-Glitch Quality Gate",
-          "description": "Automated MediaValidator verifies zero frozen frames, video loops, or silent dropouts before final delivery.",
-          "icon": "ShieldCheck"
+          "name": "Character Agent",
+          "role": "Visual Designer",
+          "input": "Approved Script",
+          "output": "Character Visuals",
+          "description": "Extracts all characters from the approved script, allows you to configure appearance references, and generates consistent character visuals that maintain identity across every scene.",
+          "details": [
+            "Extracts character list from approved script",
+            "Accepts user-provided reference images",
+            "Generates consistent character appearances",
+            "Ensures visual continuity across all scenes",
+            "Supports targeted regeneration of individual characters"
+          ],
+          "approval": "Review each character individually. Reject and regenerate specific characters without losing approved ones."
         },
         {
-          "title": "Targeted Re-takes",
-          "description": "Dislike shot 3? Don't re-render the entire film. Change the camera direction or prompt for that exact shot only.",
-          "icon": "RotateCcw"
+          "name": "Voiceover Agent",
+          "role": "Audio Producer",
+          "input": "Approved Characters",
+          "output": "Voice Assets",
+          "description": "Configures unique voice profiles for each character, processes the dialogue from the approved script, and generates high-quality audio segments that match the timing and emotion of each scene.",
+          "details": [
+            "Assigns unique voice profiles per character",
+            "Processes dialogue text from approved script",
+            "Generates audio segments per shot",
+            "Supports preview, re-recording, and fine-tuning",
+            "Batch or per-segment review workflow"
+          ],
+          "approval": "Preview audio segments individually. Approve the full batch or regenerate specific dialogue lines."
         },
         {
-          "title": "Broadcast Soundstage",
-          "description": "Audio is mastered to industry -16 LUFS loudness with distinct vocal separation and crisp intelligibility.",
-          "icon": "Volume2"
+          "name": "Video Agent",
+          "role": "Cinematographer",
+          "input": "Approved Voiceovers",
+          "output": "Video Shots",
+          "description": "Renders individual video shots using the full approved context — script, characters, and audio. Runs parallel generation jobs tracked via Redis queues, with per-shot review and targeted regeneration.",
+          "details": [
+            "Consumes all upstream approved artifacts",
+            "Parallel shot generation via Redis job queues",
+            "Real-time job status tracking and progress",
+            "Handles background music where supported",
+            "Per-shot review with targeted regeneration"
+          ],
+          "approval": "Review each shot individually. Approve, reject, or regenerate specific shots while keeping others intact."
         },
         {
-          "title": "Parallel Multi-Shot Engine",
-          "description": "Shots render concurrently, turning multi-scene productions into fast minutes instead of hours.",
-          "icon": "Zap"
+          "name": "Editor Agent",
+          "role": "Post-Production",
+          "input": "Approved Clips",
+          "output": "Final Video",
+          "description": "Assembles all approved video shots, applies transitions between scenes, overlays the approved voiceover audio, and produces the final rendered film ready for export.",
+          "details": [
+            "Assembles approved clips in narrative order",
+            "Applies scene transitions automatically",
+            "Overlays voiceover and background audio",
+            "Produces final rendered video output",
+            "Confirmation step before final assembly"
+          ],
+          "approval": "Confirm the final assembly. This is a compilation step, not a creative rewrite stage."
+        }
+      ]
+    },
+    "projectManager": {
+      "title": "Your Creative Command Center",
+      "subtitle": "Every asset, every version, every decision — organized and accessible in one persistent workspace.",
+      "features": [
+        {
+          "title": "Project Folders",
+          "description": "Create, rename, and manage separate film projects. Each project maintains its own isolated assets, conversations, and workflow state."
         },
         {
-          "title": "100% Commercial Ownership",
-          "description": "Export watermark-free, high-definition videos with full rights for commercial distribution.",
-          "icon": "Sparkles"
+          "title": "Version Control",
+          "description": "Every script revision, character iteration, and video re-render is tracked. Compare versions side-by-side and roll back to any prior state."
+        },
+        {
+          "title": "Artifact Browser",
+          "description": "Browse scripts, character sheets, voiceover clips, video shots, and the final film — all organized by production stage within your project."
+        },
+        {
+          "title": "Review & Approval",
+          "description": "Approve, reject, or request changes at every stage. Only approved artifacts flow downstream. You maintain complete creative authority."
+        },
+        {
+          "title": "Session Persistence",
+          "description": "Close your browser mid-render and come back tomorrow. Your workflow state, pending approvals, and running jobs are all preserved."
+        },
+        {
+          "title": "Multi-Tab Workspace",
+          "description": "Open multiple artifacts simultaneously. Review your script in one tab while inspecting generated characters in another."
         }
       ]
     },
@@ -292,7 +294,7 @@
       ]
     },
     "footer": {
-      "copyright": "\u00a9 2026 CineForge Studio. All rights reserved."
+      "copyright": "© 2024 CineForge Studio. All rights reserved."
     }
   },
   "workspace": {
@@ -315,8 +317,6 @@
     "artifactManager": {
       "title": "Project Artifacts",
       "uploadAsset": "Upload Asset",
-      "upload": "Upload",
-      "uploading": "Uploading...",
       "searchPlaceholder": "Search artifacts...",
       "folders": {
         "scripts": "Scripts",

@@ -87,12 +87,16 @@ export function AgentChat({ project, workflowState, onFetchState, onSwitchTab }:
     }
   };
 
+  const [isSubmittingApproval, setIsSubmittingApproval] = useState(false);
+
   const handleRespondApproval = async (approved: boolean) => {
+    if (isSubmittingApproval) return;
     if (!approved && !showReasonInput) {
       setShowReasonInput(true);
       return;
     }
-    
+
+    setIsSubmittingApproval(true);
     setApprovalPending(false);
     setShowReasonInput(false);
     const stageToRespond = effectiveApprovalStage || approvalStage;
@@ -117,6 +121,8 @@ export function AgentChat({ project, workflowState, onFetchState, onSwitchTab }:
       console.error('Failed to submit approval:', error);
       setIsError(true);
       setIsLoading(false);
+    } finally {
+      setIsSubmittingApproval(false);
     }
   };
 
@@ -536,13 +542,15 @@ export function AgentChat({ project, workflowState, onFetchState, onSwitchTab }:
               <div className="flex gap-3">
                 <button 
                   onClick={() => handleRespondApproval(true)}
-                  className="flex-1 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg text-sm font-medium transition-colors cursor-pointer"
+                  disabled={isSubmittingApproval}
+                  className="flex-1 py-2 bg-green-500 hover:bg-green-600 disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors cursor-pointer"
                 >
                   Yes, proceed
                 </button>
                 <button 
                   onClick={() => handleRespondApproval(false)}
-                  className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer border ${
+                  disabled={isSubmittingApproval}
+                  className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer border disabled:opacity-50 ${
                     isDark ? 'bg-white/10 hover:bg-white/15 text-slate-200 border-white/10' : 'bg-stone-100 hover:bg-stone-200 text-stone-700 border-stone-200'
                   }`}
                 >
@@ -562,7 +570,7 @@ export function AgentChat({ project, workflowState, onFetchState, onSwitchTab }:
                   />
                   <button 
                     onClick={() => handleRespondApproval(false)}
-                    disabled={!rejectionReason.trim()}
+                    disabled={!rejectionReason.trim() || isSubmittingApproval}
                     className="py-2 bg-orange-500 hover:bg-orange-600 disabled:bg-stone-300 text-white rounded-lg text-sm font-medium transition-colors cursor-pointer"
                   >
                     Submit Feedback

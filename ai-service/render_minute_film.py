@@ -112,9 +112,8 @@ def generate_full_minute_film(project_id: str = "6ac13c8b8d1adb207741a2cc"):
         print(f"Rendering Shot {idx+1}/{len(shots)}: {shot_id} [{speaker}] (10.0s act)...")
         res = subprocess.run(cmd, capture_output=True, text=True)
         if res.returncode != 0:
-            print(f"[Error] Shot {shot_id} failed: {res.stderr[:200]}")
-        else:
-            print(f"  [OK] Shot {shot_id} completed: 10.0s ({os.path.getsize(clip_out)} bytes)")
+            raise RuntimeError(f"Shot {shot_id} failed: {res.stderr[:200]}")
+        print(f"  [OK] Shot {shot_id} completed: 10.0s ({os.path.getsize(clip_out)} bytes)")
 
         rel_video_url = f"/renders/{project_id}/{shot_id}.mp4"
         rel_thumb_url = f"/{os.path.basename(img_path)}"
@@ -145,17 +144,17 @@ def generate_full_minute_film(project_id: str = "6ac13c8b8d1adb207741a2cc"):
         final_film_path
     ]
     res_concat = subprocess.run(concat_cmd, capture_output=True, text=True)
-    if res_concat.returncode == 0:
-        film_size = os.path.getsize(final_film_path)
-        print(f"  [OK] Master 60-second film generated: {final_film_path} ({film_size} bytes)")
-    else:
-        print(f"[Error] Concat failed: {res_concat.stderr[:200]}")
+    if res_concat.returncode != 0:
+        raise RuntimeError(f"Concat failed: {res_concat.stderr[:200]}")
+    film_size = os.path.getsize(final_film_path)
+    print(f"  [OK] Master film generated: {final_film_path} ({film_size} bytes)")
 
-    # Persist updated state with complete 60s video metadata
+    # Persist updated state with actual total duration
+    total_duration = round(sum(s["duration_seconds"] for s in video_shot_records), 1)
     data["current_stage"] = "video"
     data["video_shots"] = video_shot_records
     data["final_video_url"] = f"/renders/{project_id}/final_film.mp4"
-    data["total_film_duration"] = 60.0
+    data["total_film_duration"] = total_duration
     data["approval_states"]["voiceovers_approved"] = True
     data["approval_states"]["video_approved"] = False
 

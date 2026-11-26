@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import type { WorkflowState } from '../../hooks/useWorkflowState';
 import { useTheme } from '../../context/ThemeContext';
 import { Volume2, Play, Pause, Sparkles, CheckCircle2, RotateCcw, Loader2, Music2, User, Users } from 'lucide-react';
@@ -20,13 +20,21 @@ export function AudioViewer({ workflowState, projectId, onRefreshState }: AudioV
   const [genderFilter, setGenderFilter] = useState<'all' | 'male' | 'female'>('all');
   const audioRefs = useRef<{ [key: string]: HTMLAudioElement | null }>({});
 
+  useEffect(() => {
+    return () => {
+      Object.values(audioRefs.current).forEach((audio) => {
+        if (audio) audio.pause();
+      });
+    };
+  }, []);
+
   const charactersMap = (workflowState?.characters || []).reduce((acc, c) => {
     if (c.name) acc[c.name.toLowerCase()] = c;
     if (c.id) acc[c.id.toLowerCase()] = c;
     return acc;
   }, {} as Record<string, any>);
 
-  const togglePlay = (shotId: string) => {
+  const togglePlay = async (shotId: string) => {
     const audio = audioRefs.current[shotId];
     if (!audio) return;
 
@@ -37,8 +45,13 @@ export function AudioViewer({ workflowState, projectId, onRefreshState }: AudioV
       if (playingShotId && audioRefs.current[playingShotId]) {
         audioRefs.current[playingShotId]?.pause();
       }
-      audio.play();
-      setPlayingShotId(shotId);
+      try {
+        await audio.play();
+        setPlayingShotId(shotId);
+      } catch (err) {
+        console.error('Audio playback failed:', err);
+        setPlayingShotId(null);
+      }
     }
   };
 

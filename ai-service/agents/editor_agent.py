@@ -5,7 +5,9 @@ Follows CineForge Fix Spec section 4.
 import os
 import json
 import shutil
+import asyncio
 import logging
+from uuid import uuid4
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 from langchain_core.runnables import RunnableConfig
@@ -15,6 +17,7 @@ from core.media_processor import (
     probe,
     compute_shot_duration,
     normalize_clip,
+    normalize_master_loudness,
     concat,
     build_audio_track,
     mux,
@@ -31,6 +34,14 @@ from core.media_validator import MediaValidator
 from schemas.state import FilmGraphState
 
 logger = logging.getLogger("cineforge.editor")
+_assembly_locks: Dict[str, asyncio.Lock] = {}
+
+def _get_assembly_lock(project_id: str) -> asyncio.Lock:
+    lock = _assembly_locks.get(project_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _assembly_locks[project_id] = lock
+    return lock
 
 
 async def assemble_video(state: FilmGraphState, config: RunnableConfig) -> FilmGraphState:
@@ -39,6 +50,12 @@ async def assemble_video(state: FilmGraphState, config: RunnableConfig) -> FilmG
     """
     emitter = config.get("configurable", {}).get("emitter")
     project_id = state.get("project_id", "default_project")
+
+    async with _get_assembly_lock(project_id):
+        return await _assemble_video_locked(state, config, emitter, project_id)
+
+
+async def _assemble_video_locked(state: FilmGraphState, config: RunnableConfig, emitter: Any, project_id: str) -> FilmGraphState:
 
     if emitter:
         await emitter.push("status", content="Starting Stage 5: Editor Agent Assembly & Media Normalization...")
@@ -53,7 +70,7 @@ async def assemble_video(state: FilmGraphState, config: RunnableConfig) -> FilmG
     )))
     renders_dir.mkdir(parents=True, exist_ok=True)
 
-    scratch_dir = renders_dir / "scratch"
+    scratch_dir = renders_dir / f"scratch_{uuid4().hex[:8]}"
     scratch_dir.mkdir(parents=True, exist_ok=True)
 
     try:
@@ -86,7 +103,7 @@ async def assemble_video(state: FilmGraphState, config: RunnableConfig) -> FilmG
                 missing_shots.append(shot_id)
             else:
                 try:
-                    p_info = probe(clip_path)
+                    p_info = await asyncio.to_thread(probe, clip_path)
                     if not p_info.has_video:
                         missing_shots.append(f"{shot_id} (no video stream)")
                     else:
@@ -107,7 +124,7 @@ async def assemble_video(state: FilmGraphState, config: RunnableConfig) -> FilmG
         for idx, shot in enumerate(shots):
             shot_id = shot.get("id") or shot.get("shot_id") or f"shot_{idx+1}"
             src_clip = valid_clips[shot_id]
-            clip_info = probe(src_clip)
+            clip_info = await asyncio.to_thread(probe, src_clip)
             if not clip_info.has_video or clip_info.duration <= 0.1:
                 raise MediaProcessingError(f"Shot {shot_id} has invalid or static video clip ({src_clip})")
             real_dur = round(clip_info.duration, 3)
@@ -156,7 +173,8 @@ async def assemble_video(state: FilmGraphState, config: RunnableConfig) -> FilmG
             if emitter:
                 await emitter.push("status", content="Generating HyperFrames Opening Movie Title Card...")
             title_card_path = scratch_dir / "00_title_card.mp4"
-            generate_title_card(
+            await asyncio.to_thread(
+                generate_title_card,
                 title=project_title,
                 subtitle=project_subtitle,
                 duration=intro_pad,
@@ -196,7 +214,8 @@ async def assemble_video(state: FilmGraphState, config: RunnableConfig) -> FilmG
                     )
 
             try:
-                norm_result = normalize_clip(
+                norm_result = await asyncio.to_thread(
+                    normalize_clip,
                     src=src_clip,
                     dst=dst_clip,
                     duration=target_dur,
@@ -224,7 +243,8 @@ async def assemble_video(state: FilmGraphState, config: RunnableConfig) -> FilmG
                 await emitter.push("status", content="Generating HyperFrames Closing End Credits Card...")
             credits_card_path = scratch_dir / "99_credits_card.mp4"
             characters = [c.get("name") for c in state.get("characters", []) if c.get("name")]
-            generate_credits_card(
+            await asyncio.to_thread(
+                generate_credits_card,
                 title=project_title,
                 characters=characters,
                 duration=outro_pad,
@@ -240,7 +260,7 @@ async def assemble_video(state: FilmGraphState, config: RunnableConfig) -> FilmG
         clip_counter = 0
         if settings.ENABLE_TITLE_CARD:
             tc_muxed = scratch_dir / "00_title_card_muxed.mp4"
-            mux_shot(normalized_clips[clip_counter], None, tc_muxed, duration=intro_pad)
+            await asyncio.to_thread(mux_shot, normalized_clips[clip_counter], None, tc_muxed, duration=intro_pad)
             muxed_clips.append(tc_muxed)
             clip_counter += 1
 
@@ -251,8 +271,16 @@ async def assemble_video(state: FilmGraphState, config: RunnableConfig) -> FilmG
             clip_counter += 1
 
             vo_audio_path = renders_dir / f"audio_{shot_id}.mp3"
+            if vo_audio_path.exists():
+                vo_info = await asyncio.to_thread(probe, vo_audio_path)
+                needed_dur = vo_info.duration + settings.SHOT_PRE_DELAY_SEC
+                if needed_dur > target_dur + settings.DURATION_TOLERANCE_SEC:
+                    raise DurationMismatchError(
+                        f"Voiceover for {shot_id} ({vo_info.duration:.2f}s + {settings.SHOT_PRE_DELAY_SEC:.2f}s pre-delay = {needed_dur:.2f}s) exceeds shot duration {target_dur:.2f}s"
+                    )
             shot_muxed = scratch_dir / f"shot_{idx+1}_muxed.mp4"
-            mux_shot(
+            await asyncio.to_thread(
+                mux_shot,
                 norm_vid,
                 vo_audio_path if vo_audio_path.exists() else None,
                 shot_muxed,
@@ -262,20 +290,22 @@ async def assemble_video(state: FilmGraphState, config: RunnableConfig) -> FilmG
 
         if settings.ENABLE_CREDITS_CARD:
             cc_muxed = scratch_dir / "99_credits_card_muxed.mp4"
-            mux_shot(normalized_clips[clip_counter], None, cc_muxed, duration=outro_pad)
+            await asyncio.to_thread(mux_shot, normalized_clips[clip_counter], None, cc_muxed, duration=outro_pad)
             muxed_clips.append(cc_muxed)
             clip_counter += 1
 
-        # 5. Concatenate all pre-muxed shots into master.mp4
+        # 5. Concatenate all pre-muxed shots and normalize loudness (-16 LUFS) in staging before publishing
         if emitter:
-            await emitter.push("status", content="Concatenating synchronized audio/video shots into master film...")
+            await emitter.push("status", content="Concatenating synchronized audio/video shots and normalizing loudness...")
+        raw_concat_path = scratch_dir / "master_concat.mp4"
+        staging_master_path = scratch_dir / "master_loudnorm.mp4"
         master_film_path = renders_dir / "master.mp4"
         legacy_film_path = renders_dir / "final_film.mp4"
         list_file = scratch_dir / "concat_list.txt"
-        concat(muxed_clips, master_film_path, list_file)
-        shutil.copyfile(master_film_path, legacy_film_path)
+        await asyncio.to_thread(concat, muxed_clips, raw_concat_path, list_file)
+        await asyncio.to_thread(normalize_master_loudness, raw_concat_path, staging_master_path)
 
-        # 6. Quality Gate: Run MediaValidator & verify_film
+        # 6. Quality Gate: Run MediaValidator & verify_film on staging before publishing
         if emitter:
             await emitter.push("status", content="Running rigorous MediaValidator quality gate on master film...")
 
@@ -289,8 +319,9 @@ async def assemble_video(state: FilmGraphState, config: RunnableConfig) -> FilmG
             duration_tolerance=settings.DURATION_TOLERANCE_SEC
         )
         validator_report_path = renders_dir / "validator_report.json"
-        val_result = validator.validate_film(
-            master_film_path,
+        val_result = await asyncio.to_thread(
+            validator.validate_film,
+            staging_master_path,
             expected_duration=expected_film_duration,
             shot_paths=raw_shot_paths,
             title_card_duration=intro_pad,
@@ -298,7 +329,7 @@ async def assemble_video(state: FilmGraphState, config: RunnableConfig) -> FilmG
             output_report_path=validator_report_path
         )
 
-        qc_results = verify_film(master_film_path)
+        qc_results = await asyncio.to_thread(verify_film, staging_master_path)
         qc_results["media_validator"] = val_result.to_dict()
 
         if not val_result.passed or not qc_results["passed"]:
@@ -309,6 +340,14 @@ async def assemble_video(state: FilmGraphState, config: RunnableConfig) -> FilmG
             state["current_stage"] = "editor_qc_failed"
             state["manifest"] = qc_results
             return state
+
+        # Publish atomically only after both quality gates pass
+        tmp_master = renders_dir / f".master_{uuid4().hex[:8]}.mp4"
+        tmp_legacy = renders_dir / f".final_film_{uuid4().hex[:8]}.mp4"
+        shutil.copyfile(staging_master_path, tmp_master)
+        shutil.copyfile(staging_master_path, tmp_legacy)
+        os.replace(tmp_master, master_film_path)
+        os.replace(tmp_legacy, legacy_film_path)
 
         # 8. Write manifest.json
         manifest_data = {
@@ -370,4 +409,4 @@ async def assemble_video(state: FilmGraphState, config: RunnableConfig) -> FilmG
             try:
                 shutil.rmtree(scratch_dir)
             except Exception as e:
-                logger.warning("Failed to clean up scratch dir %s: %e", scratch_dir, e)
+                logger.warning("Failed to clean up scratch dir %s: %s", scratch_dir, e)

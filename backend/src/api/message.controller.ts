@@ -249,8 +249,17 @@ export const getWorkflowState = async (req: Request, res: Response): Promise<voi
       });
       if (response.ok) {
         const liveState = await response.json();
-        res.json(liveState);
-        return;
+        const hasLiveState = Boolean(
+          liveState?.current_stage ||
+          liveState?.script_data ||
+          (Array.isArray(liveState?.characters) && liveState.characters.length > 0) ||
+          (Array.isArray(liveState?.voiceovers) && liveState.voiceovers.length > 0) ||
+          (Array.isArray(liveState?.video_shots) && liveState.video_shots.length > 0)
+        );
+        if (hasLiveState) {
+          res.json(liveState);
+          return;
+        }
       }
     } catch {
       // Fall back to Mongo stored state

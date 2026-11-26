@@ -118,6 +118,11 @@ def generate_alive_cinematic_movie(project_id: str = "6ac13c8b8d1adb207741a2cc")
         sparks[:, 3] = np.random.uniform(fx["spark_vy"] - 2, fx["spark_vy"] + 1, fx["spark_count"])
         sparks[:, 4] = sparks[:, 4] * 3.5 + 2
 
+        # Precompute static vignette mask once per shot
+        vignette = np.zeros((target_h, target_w), dtype=np.float32)
+        cv2.circle(vignette, (target_w//2, target_h//2), int(target_w * 0.68), 1.0, -1)
+        vignette = cv2.GaussianBlur(vignette, (151, 151), 0)[:, :, None]
+
         for f in range(total_frames):
             t = f / fps
             prog = f / total_frames
@@ -185,10 +190,7 @@ def generate_alive_cinematic_movie(project_id: str = "6ac13c8b8d1adb207741a2cc")
                 cv2.circle(frame, (sx, sy), sz + 2, fx["flare_color"], 1)
 
             # 5. Cinematic Vignette
-            vignette = np.zeros((target_h, target_w), dtype=np.float32)
-            cv2.circle(vignette, (target_w//2, target_h//2), int(target_w * 0.68), 1.0, -1)
-            vignette = cv2.GaussianBlur(vignette, (151, 151), 0)
-            frame = (frame * vignette[:, :, None]).astype(np.uint8)
+            frame = (frame * vignette).astype(np.uint8)
 
             writer.write(frame)
 
@@ -236,10 +238,9 @@ def generate_alive_cinematic_movie(project_id: str = "6ac13c8b8d1adb207741a2cc")
             ]
 
         res = subprocess.run(mux_cmd, capture_output=True, text=True)
-        if res.returncode == 0:
-            print(f"  [OK] Shot {shot_id} rendered with live character FX & speech: {os.path.getsize(final_shot_mp4)} bytes")
-        else:
-            print(f"[Error] Failed to mux {shot_id}: {res.stderr[:200]}")
+        if res.returncode != 0:
+            raise RuntimeError(f"Failed to mux {shot_id}: {res.stderr[:200]}")
+        print(f"  [OK] Shot {shot_id} rendered with live character FX & speech: {os.path.getsize(final_shot_mp4)} bytes")
 
         if os.path.exists(raw_motion_mp4):
             os.remove(raw_motion_mp4)
@@ -273,16 +274,15 @@ def generate_alive_cinematic_movie(project_id: str = "6ac13c8b8d1adb207741a2cc")
         final_film_path
     ]
     res_concat = subprocess.run(concat_cmd, capture_output=True, text=True)
-    if res_concat.returncode == 0:
-        print(f"  [OK] Master Alive Movie Film Created: {final_film_path} ({os.path.getsize(final_film_path)} bytes)")
-    else:
-        print(f"[Error] Concat failed: {res_concat.stderr[:200]}")
+    if res_concat.returncode != 0:
+        raise RuntimeError(f"Concat failed: {res_concat.stderr[:200]}")
+    print(f"  [OK] Master Alive Movie Film Created: {final_film_path} ({os.path.getsize(final_film_path)} bytes)")
 
     # Persist updated state
     data["current_stage"] = "video"
     data["video_shots"] = video_shot_records
     data["final_video_url"] = f"/renders/{project_id}/final_film.mp4"
-    data["total_film_duration"] = 60.0
+    data["total_film_duration"] = round(sum(s["duration_seconds"] for s in video_shot_records), 1)
     data["approval_states"]["voiceovers_approved"] = True
     data["approval_states"]["video_approved"] = False
 

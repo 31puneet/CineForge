@@ -8,8 +8,10 @@ async def render_all():
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
-    # Classify gender on characters
+    # Classify gender on characters only when missing
     for c in data.get("characters", []):
+        if c.get("gender"):
+            continue
         name = c["name"].lower()
         if "shadow" in name or "weaver" in name or "titaness" in name:
             c["gender"] = "female"

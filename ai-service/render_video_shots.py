@@ -106,9 +106,8 @@ def generate_video_shots(project_id: str = "6ac13c8b8d1adb207741a2cc"):
         print(f"Rendering Shot {idx+1}/{len(shots)}: {shot_id} ({speaker}) -> {duration:.1f}s...")
         res = subprocess.run(cmd, capture_output=True, text=True)
         if res.returncode != 0:
-            print(f"FFmpeg error on {shot_id}: {res.stderr[:200]}")
-        else:
-            print(f"  [OK] Shot {shot_id} rendered successfully ({os.path.getsize(clip_out)} bytes)")
+            raise RuntimeError(f"FFmpeg error on {shot_id}: {res.stderr[:200]}")
+        print(f"  [OK] Shot {shot_id} rendered successfully ({os.path.getsize(clip_out)} bytes)")
 
         # Web accessible URL
         rel_video_url = f"/renders/{project_id}/{shot_id}.mp4"
@@ -141,10 +140,9 @@ def generate_video_shots(project_id: str = "6ac13c8b8d1adb207741a2cc"):
         final_film_path
     ]
     res_concat = subprocess.run(concat_cmd, capture_output=True, text=True)
-    if res_concat.returncode == 0:
-        print(f"  [OK] Final assembled film created: {final_film_path} ({os.path.getsize(final_film_path)} bytes)")
-    else:
-        print(f"  Concat error: {res_concat.stderr[:200]}")
+    if res_concat.returncode != 0:
+        raise RuntimeError(f"Concat error: {res_concat.stderr[:200]}")
+    print(f"  [OK] Final assembled film created: {final_film_path} ({os.path.getsize(final_film_path)} bytes)")
 
     # Update state cache
     data["current_stage"] = "video"

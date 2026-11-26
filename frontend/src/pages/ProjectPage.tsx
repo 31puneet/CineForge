@@ -161,12 +161,16 @@ export default function ProjectPage() {
           <div className={`absolute inset-0 ${activeTab === 'characters' || activeTab === 'characters_tab' ? 'block' : 'hidden'}`}>
             <CharacterViewer workflowState={workflowState} projectId={id} onRefreshState={fetchState} />
           </div>
-          <div className={`absolute inset-0 ${activeTab === 'audio' ? 'block' : 'hidden'}`}>
-            <AudioViewer workflowState={workflowState} projectId={id} onRefreshState={fetchState} />
-          </div>
-          <div className={`absolute inset-0 ${activeTab === 'video' ? 'block' : 'hidden'}`}>
-            <VideoViewer workflowState={workflowState} projectId={id} onRefreshState={fetchState} />
-          </div>
+          {activeTab === 'audio' && (
+            <div className="absolute inset-0">
+              <AudioViewer workflowState={workflowState} projectId={id} onRefreshState={fetchState} />
+            </div>
+          )}
+          {activeTab === 'video' && (
+            <div className="absolute inset-0">
+              <VideoViewer workflowState={workflowState} projectId={id} onRefreshState={fetchState} />
+            </div>
+          )}
         </div>
       </div>
 

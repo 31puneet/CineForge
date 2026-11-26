@@ -26,26 +26,27 @@ def detect_black_bars(video_path: Path | str, sample_seconds: float = 5.0) -> bo
     Returns True if black bars are detected.
     """
     v_path = str(Path(video_path).resolve())
+    info = probe(v_path)
+    seek_pos = "0" if info.duration < 1.5 else "00:00:01"
     cmd = [
-        FFMPEG_BIN, "-hide_banner", "-ss", "00:00:01", "-t", f"{sample_seconds:.1f}",
+        FFMPEG_BIN, "-hide_banner", "-ss", seek_pos, "-t", f"{sample_seconds:.1f}",
         "-i", v_path,
         "-vf", "cropdetect=24:16:0",
         "-f", "null", "-"
     ]
-    try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-        # Look for crop dimensions in output
-        matches = re.findall(r"crop=(\d+):(\d+):(\d+):(\d+)", proc.stderr)
-        if matches:
-            # If detected crop width or height is significantly smaller than full frame (e.g. < 95% of target)
-            crops = [(int(w), int(h)) for w, h, _, _ in matches[-10:]]
-            if crops:
-                avg_w = sum(w for w, _ in crops) / len(crops)
-                avg_h = sum(h for _, h in crops) / len(crops)
-                if avg_w < (settings.TARGET_WIDTH * 0.92) or avg_h < (settings.TARGET_HEIGHT * 0.92):
-                    return True
-    except Exception as e:
-        print(f"[MediaValidator] Error during cropdetect: {e}")
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    if proc.returncode != 0:
+        raise RuntimeError(f"cropdetect failed for {v_path}: {proc.stderr[-500:]}")
+    matches = re.findall(r"crop=(\d+):(\d+):(\d+):(\d+)", proc.stderr)
+    if matches:
+        crops = [(int(w), int(h)) for w, h, _, _ in matches[-10:]]
+        if crops:
+            avg_w = sum(w for w, _ in crops) / len(crops)
+            avg_h = sum(h for _, h in crops) / len(crops)
+            ref_w = info.width or settings.TARGET_WIDTH
+            ref_h = info.height or settings.TARGET_HEIGHT
+            if avg_w < (ref_w * 0.92) or avg_h < (ref_h * 0.92):
+                return True
     return False
 
 
@@ -66,32 +67,30 @@ def detect_freezes(video_path: Path | str, min_duration: float = 1.0, ignore_sta
         "-f", "null", "-"
     ]
     freezes = []
-    try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-        start_matches = [float(x) for x in re.findall(r"freeze_start:\s*([-\d.]+)", proc.stderr)]
-        end_matches = [float(x) for x in re.findall(r"freeze_end:\s*([-\d.]+)", proc.stderr)]
-        dur_matches = [float(x) for x in re.findall(r"freeze_duration:\s*([-\d.]+)", proc.stderr)]
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    if proc.returncode != 0:
+        raise RuntimeError(f"freezedetect failed for {v_path}: {proc.stderr[-500:]}")
+    start_matches = [float(x) for x in re.findall(r"freeze_start:\s*([-\d.]+)", proc.stderr)]
+    end_matches = [float(x) for x in re.findall(r"freeze_end:\s*([-\d.]+)", proc.stderr)]
+    dur_matches = [float(x) for x in re.findall(r"freeze_duration:\s*([-\d.]+)", proc.stderr)]
 
-        for i, s in enumerate(start_matches):
-            if i < len(end_matches):
-                end = end_matches[i]
-                d = dur_matches[i] if i < len(dur_matches) else (end - s)
-            else:
-                end = total_dur
-                d = total_dur - s
+    for i, s in enumerate(start_matches):
+        if i < len(end_matches):
+            end = end_matches[i]
+            d = dur_matches[i] if i < len(dur_matches) else (end - s)
+        else:
+            end = total_dur
+            d = total_dur - s
 
-            if d < min_duration:
-                continue
+        if d < min_duration:
+            continue
 
-            # Ignore if within title card or credits card regions
-            if ignore_start > 0 and end <= (ignore_start + 0.1):
-                continue
-            if ignore_end > 0 and s >= (total_dur - ignore_end - 0.1):
-                continue
+        if ignore_start > 0 and end <= (ignore_start + 0.1):
+            continue
+        if ignore_end > 0 and s >= (total_dur - ignore_end - 0.1):
+            continue
 
-            freezes.append({"start": round(s, 2), "duration": round(d, 2), "end": round(end, 2)})
-    except Exception as e:
-        print(f"[MediaValidator] Error during freezedetect: {e}")
+        freezes.append({"start": round(s, 2), "duration": round(d, 2), "end": round(end, 2)})
     return freezes
 
 
@@ -109,14 +108,11 @@ def extract_downscaled_frames(video_path: Path | str, fps: int = 1, width: int =
         "-pix_fmt", "gray",
         "-"
     ]
-    try:
-        proc = subprocess.run(cmd, capture_output=True, timeout=30)
-        raw = proc.stdout
-        frames = [raw[i : i + frame_size] for i in range(0, len(raw), frame_size) if len(raw[i : i + frame_size]) == frame_size]
-        return frames
-    except Exception as e:
-        print(f"[MediaValidator] Error extracting downscaled frames: {e}")
-        return []
+    proc = subprocess.run(cmd, capture_output=True, timeout=30)
+    if proc.returncode != 0:
+        raise RuntimeError(f"frame extraction failed for {v_path}: {proc.stderr.decode('utf-8', errors='replace')[-500:]}")
+    raw = proc.stdout
+    return [raw[i : i + frame_size] for i in range(0, len(raw), frame_size) if len(raw[i : i + frame_size]) == frame_size]
 
 
 def compute_frame_difference(f1: bytes, f2: bytes) -> float:
@@ -127,26 +123,33 @@ def compute_frame_difference(f1: bytes, f2: bytes) -> float:
     return total_diff / len(f1)
 
 
-def detect_shot_loops(video_path: Path | str, min_offset: int = 2, max_offset: int = 9, diff_threshold: float = 3.0) -> list[dict]:
+def detect_shot_loops(video_path: Path | str, min_offset: int = 2, max_offset: int = 9, diff_threshold: float = 3.0, min_consecutive: int = 2) -> list[dict]:
     """
     Computes frame self-similarity within each shot at offsets of 2-9s.
-    Fails if a shot matches itself (mean absolute difference < diff_threshold on 64x36 grayscale).
+    Requires at least `min_consecutive` consecutive matching frames at the same offset
+    to avoid rejecting low-motion shots on a single matching frame pair.
     """
     frames = extract_downscaled_frames(video_path, fps=1, width=64, height=36)
     loops = []
-    if len(frames) < min_offset + 1:
+    if len(frames) < min_offset + min_consecutive:
         return loops
 
     for offset in range(min_offset, min(max_offset + 1, len(frames))):
+        streak = 0
         for i in range(len(frames) - offset):
             diff = compute_frame_difference(frames[i], frames[i + offset])
             if diff < diff_threshold:
-                loops.append({
-                    "time_a": i,
-                    "time_b": i + offset,
-                    "offset_sec": offset,
-                    "mean_diff": round(diff, 2)
-                })
+                streak += 1
+                if streak >= min_consecutive:
+                    loops.append({
+                        "time_a": i,
+                        "time_b": i + offset,
+                        "offset_sec": offset,
+                        "mean_diff": round(diff, 2)
+                    })
+                    break
+            else:
+                streak = 0
     return loops
 
 
@@ -155,25 +158,24 @@ def detect_duplicate_shots(shot_paths: list[Path | str], diff_threshold: float =
     Checks if any two distinct shots are near-identical copies or frozen stills of each other.
     """
     duplicates = []
-    shot_frames = {}
+    shot_entries: list[tuple[Path, list[bytes]]] = []
     for p in shot_paths:
         frames = extract_downscaled_frames(p, fps=1, width=64, height=36)
         if frames:
-            shot_frames[str(p)] = frames
+            shot_entries.append((Path(p), frames))
 
-    keys = list(shot_frames.keys())
-    for i in range(len(keys)):
-        for j in range(i + 1, len(keys)):
-            k1, k2 = keys[i], keys[j]
-            frames1, frames2 = shot_frames[k1], shot_frames[k2]
+    for i in range(len(shot_entries)):
+        for j in range(i + 1, len(shot_entries)):
+            p1, frames1 = shot_entries[i]
+            p2, frames2 = shot_entries[j]
             compare_len = min(len(frames1), len(frames2))
             if compare_len >= 2:
                 diffs = [compute_frame_difference(frames1[idx], frames2[idx]) for idx in range(compare_len)]
                 avg_diff = sum(diffs) / len(diffs)
                 if avg_diff < diff_threshold:
                     duplicates.append({
-                        "shot_a": Path(k1).name,
-                        "shot_b": Path(k2).name,
+                        "shot_a": f"{p1.name}#{i+1}",
+                        "shot_b": f"{p2.name}#{j+1}",
                         "avg_diff": round(avg_diff, 2)
                     })
     return duplicates
@@ -288,26 +290,48 @@ class MediaValidator:
                 )
 
         # Freeze check outside title and credits cards
-        freezes = detect_freezes(
-            master_path,
-            min_duration=1.0,
-            ignore_start=title_card_duration,
-            ignore_end=credits_card_duration
-        )
-        if freezes:
-            errors.append(f"Detected unpermitted freeze(s) outside title/end cards: {freezes}")
-            metrics["freezes"] = freezes
+        try:
+            freezes = detect_freezes(
+                master_path,
+                min_duration=1.0,
+                ignore_start=title_card_duration,
+                ignore_end=credits_card_duration
+            )
+            if freezes:
+                errors.append(f"Detected unpermitted freeze(s) outside title/end cards: {freezes}")
+                metrics["freezes"] = freezes
+        except Exception as e:
+            errors.append(f"Freeze detection failed: {e}")
 
         # Black bar detection
-        if detect_black_bars(master_path):
-            errors.append("Detected black bars in final film")
+        try:
+            if detect_black_bars(master_path):
+                errors.append("Detected black bars in final film")
+        except Exception as e:
+            errors.append(f"Black bar detection failed: {e}")
 
-        # Duplicate shots check
-        if shot_paths and len(shot_paths) > 1:
-            duplicates = detect_duplicate_shots(shot_paths, diff_threshold=3.0)
-            if duplicates:
-                errors.append(f"Detected near-identical / duplicate shots: {duplicates}")
-                metrics["duplicate_shots"] = duplicates
+        # Within-shot loop detection & Duplicate shots check
+        if shot_paths:
+            shot_loops = []
+            for sp in shot_paths:
+                try:
+                    loops = detect_shot_loops(sp, min_offset=2, max_offset=9, diff_threshold=3.0)
+                    if loops:
+                        shot_loops.append({"shot": Path(sp).name, "loops": loops})
+                except Exception as e:
+                    errors.append(f"Loop detection failed for {Path(sp).name}: {e}")
+            if shot_loops:
+                errors.append(f"Detected within-shot looping: {shot_loops}")
+                metrics["shot_loops"] = shot_loops
+
+            if len(shot_paths) > 1:
+                try:
+                    duplicates = detect_duplicate_shots(shot_paths, diff_threshold=3.0)
+                    if duplicates:
+                        errors.append(f"Detected near-identical / duplicate shots: {duplicates}")
+                        metrics["duplicate_shots"] = duplicates
+                except Exception as e:
+                    errors.append(f"Duplicate shot detection failed: {e}")
 
         passed = len(errors) == 0
         report = ValidationResult(passed=passed, errors=errors, warnings=warnings, metrics=metrics)

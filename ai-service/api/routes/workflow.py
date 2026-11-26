@@ -3,9 +3,11 @@ from pydantic import BaseModel
 from typing import Dict, Any, Optional
 import asyncio
 import json
+import re
 import traceback
 import os
-from langchain_core.messages import HumanMessage
+from pathlib import Path
+from langchain_core.messages import HumanMessage, AIMessage
 from fastapi.responses import StreamingResponse
 
 from agents.graph import app as graph_app
@@ -48,14 +50,38 @@ class RegenerateShotRequest(BaseModel):
     shot_id: str
     feedback: Optional[str] = None
 
-import os
-STATE_CACHE_DIR = os.path.join(os.path.dirname(__file__), "..", "..", ".state_cache")
+STATE_CACHE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".state_cache"))
 os.makedirs(STATE_CACHE_DIR, exist_ok=True)
+RENDERS_ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "frontend", "public", "renders"))
+
+_PROJECT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+def _validate_project_id(project_id: str) -> str:
+    if not project_id or not _PROJECT_ID_RE.fullmatch(project_id):
+        raise HTTPException(status_code=400, detail="Invalid project_id")
+    return project_id
+
+def _get_cache_path(project_id: str) -> str:
+    pid = _validate_project_id(project_id)
+    target = Path(STATE_CACHE_DIR, f"{pid}.json").resolve()
+    root = Path(STATE_CACHE_DIR).resolve()
+    if root not in target.parents:
+        raise HTTPException(status_code=400, detail="Invalid project_id path")
+    return str(target)
+
+def _get_renders_dir(project_id: str) -> str:
+    pid = _validate_project_id(project_id)
+    target = Path(RENDERS_ROOT_DIR, pid).resolve()
+    root = Path(RENDERS_ROOT_DIR).resolve()
+    if root not in target.parents:
+        raise HTTPException(status_code=400, detail="Invalid renders directory")
+    os.makedirs(target, exist_ok=True)
+    return str(target)
 
 _memory_store: Dict[str, FilmGraphState] = {}
 
 def load_persisted_state(project_id: str) -> Optional[FilmGraphState]:
-    cache_path = os.path.join(STATE_CACHE_DIR, f"{project_id}.json")
+    cache_path = _get_cache_path(project_id)
     if os.path.exists(cache_path):
         try:
             with open(cache_path, "r", encoding="utf-8") as f:
@@ -63,7 +89,11 @@ def load_persisted_state(project_id: str) -> Optional[FilmGraphState]:
                 messages = []
                 for m in data.get("messages", []):
                     if isinstance(m, dict):
-                        messages.append(HumanMessage(content=m.get("content", "")))
+                        content = m.get("content", "")
+                        if m.get("role") == "user":
+                            messages.append(HumanMessage(content=content))
+                        else:
+                            messages.append(AIMessage(content=content))
                     elif isinstance(m, str):
                         messages.append(HumanMessage(content=m))
                 data["messages"] = messages
@@ -77,8 +107,8 @@ def load_persisted_state(project_id: str) -> Optional[FilmGraphState]:
 
 def save_persisted_state(project_id: str, state: FilmGraphState):
     _memory_store[project_id] = state
-    cache_path = os.path.join(STATE_CACHE_DIR, f"{project_id}.json")
-    tmp_path = os.path.join(STATE_CACHE_DIR, f"{project_id}.json.tmp")
+    cache_path = _get_cache_path(project_id)
+    tmp_path = f"{cache_path}.tmp"
     try:
         final_film = state.get("final_film_url") or state.get("final_video_url")
         serializable = {
@@ -423,6 +453,15 @@ async def regenerate_voiceover(req: RegenerateVoiceoverRequest):
     voice_id = req.voice_id or target_vo.get("voice_id", "en-US-ChristopherNeural")
     
     new_audio_url = await tts.generate_speech(text=text, voice_id=voice_id)
+    if new_audio_url and "base64," in new_audio_url:
+        import base64
+        renders_dir = _get_renders_dir(req.project_id)
+        audio_disk_path = os.path.join(renders_dir, f"audio_{req.shot_id}.mp3")
+        b64_part = new_audio_url.split("base64,", 1)[1]
+        with open(audio_disk_path, "wb") as af:
+            af.write(base64.b64decode(b64_part))
+        new_audio_url = f"/renders/{req.project_id}/audio_{req.shot_id}.mp3"
+
     target_vo["audio_url"] = new_audio_url
     if req.dialogue:
         target_vo["dialogue"] = req.dialogue
@@ -451,11 +490,10 @@ async def regenerate_shot(req: RegenerateShotRequest):
     if not target_shot:
         raise HTTPException(status_code=404, detail=f"Shot {req.shot_id} not found")
     
-    renders_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "frontend", "public", "renders", req.project_id))
-    os.makedirs(renders_dir, exist_ok=True)
+    renders_dir = _get_renders_dir(req.project_id)
 
     from core.video_generator import generate_ai_video_clip, QuotaExceededError
-    from core.media_processor import FFMPEG_BIN, probe, compute_shot_duration
+    from core.media_processor import FFMPEG_BIN, probe
     from core.config import settings
 
     shot_img = os.path.join(renders_dir, f"{req.shot_id}_scene.jpg")
@@ -477,22 +515,46 @@ async def regenerate_shot(req: RegenerateShotRequest):
                 image_path=shot_img,
                 prompt=motion_prompt,
                 hf_token=settings.HUGGINGFACE_API_KEY,
-                duration=shot_dur,
+                duration=settings.PROVIDER_CLIP_SECONDS,
                 steps=4
             )
         )
-        if ai_clip and os.path.exists(ai_clip):
-            import shutil
-            shutil.copyfile(ai_clip, raw_clip_out)
-            shutil.copyfile(ai_clip, final_clip_out)
-            target_shot["status"] = "completed"
-            target_shot["video_url"] = f"/renders/{req.project_id}/{req.shot_id}.mp4"
-            target_shot["static_fallback"] = False
-            target_shot["duration_sec"] = shot_dur
-            target_shot["duration_seconds"] = shot_dur
-            target_shot["error_message"] = None
-        else:
+        if not ai_clip or not os.path.exists(ai_clip):
             raise RuntimeError("Video generation produced no clip")
+        clip_info = probe(ai_clip)
+        if not clip_info.has_video:
+            raise RuntimeError("Output clip has no video stream")
+        if clip_info.duration <= 0.5 or (clip_info.fps is not None and clip_info.fps <= 1.0):
+            raise RuntimeError(f"Static clip detected: duration={clip_info.duration:.2f}s, fps={clip_info.fps}")
+        if clip_info.duration < 3.0:
+            raise RuntimeError(f"Clip too short: {clip_info.duration:.2f}s < 3.00s")
+
+        import shutil, subprocess
+        shutil.copyfile(ai_clip, raw_clip_out)
+        if clip_info.duration > shot_dur + 0.1:
+            trim_cmd = [FFMPEG_BIN, "-y", "-i", ai_clip, "-t", str(shot_dur), "-c", "copy", final_clip_out]
+            res = await asyncio.to_thread(lambda: subprocess.run(trim_cmd, capture_output=True))
+            if res.returncode != 0 or not os.path.exists(final_clip_out):
+                reencode_cmd = [
+                    FFMPEG_BIN, "-y", "-i", ai_clip, "-t", str(shot_dur),
+                    "-c:v", "libx264", "-preset", "fast", "-crf", str(settings.VIDEO_CRF),
+                    "-pix_fmt", "yuv420p", "-an", final_clip_out
+                ]
+                res = await asyncio.to_thread(lambda: subprocess.run(reencode_cmd, capture_output=True))
+            if res.returncode != 0 or not os.path.exists(final_clip_out):
+                raise RuntimeError(f"Failed to trim regenerated shot to {shot_dur:.2f}s")
+            final_info = probe(final_clip_out)
+            real_dur = round(final_info.duration, 3) if final_info.duration > 0 else shot_dur
+        else:
+            shutil.copyfile(ai_clip, final_clip_out)
+            real_dur = round(clip_info.duration, 3)
+
+        target_shot["status"] = "completed"
+        target_shot["video_url"] = f"/renders/{req.project_id}/{req.shot_id}.mp4"
+        target_shot["static_fallback"] = False
+        target_shot["duration_sec"] = real_dur
+        target_shot["duration_seconds"] = real_dur
+        target_shot["error_message"] = None
     except QuotaExceededError as qe:
         target_shot["status"] = "failed_quota"
         target_shot["error_message"] = str(qe)
@@ -504,7 +566,9 @@ async def regenerate_shot(req: RegenerateShotRequest):
     thumb_path = os.path.join(renders_dir, f"thumb_{req.shot_id}.jpg")
     if os.path.exists(final_clip_out):
         import subprocess
-        subprocess.run([FFMPEG_BIN, "-y", "-ss", "00:00:01", "-i", final_clip_out, "-vframes", "1", thumb_path], capture_output=True)
+        await asyncio.to_thread(
+            lambda: subprocess.run([FFMPEG_BIN, "-y", "-ss", "00:00:01", "-i", final_clip_out, "-vframes", "1", thumb_path], capture_output=True)
+        )
         target_shot["thumbnail_url"] = f"/renders/{req.project_id}/thumb_{req.shot_id}.jpg"
 
     async with _get_project_lock(req.project_id):

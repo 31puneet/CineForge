@@ -12,24 +12,11 @@ interface VideoViewerProps {
 
 export function VideoViewer({ workflowState, projectId, onRefreshState }: VideoViewerProps) {
   const { isDark } = useTheme();
-  // Built-in fallback shots for active project
-  const defaultShots: VideoShot[] = projectId ? [
-    { shot_id: 'shot_1', video_url: `/renders/${projectId}/shot_1.mp4`, thumbnail_url: '/solaris.jpg', speaker: 'Solaris', dialogue: 'The dimensional breach is expanding! Assemble at the citadel!', duration_seconds: 10.0 },
-    { shot_id: 'shot_2', video_url: `/renders/${projectId}/shot_2.mp4`, thumbnail_url: '/malakor.jpg', speaker: 'Malakor', dialogue: 'Mortal heroes... your light will drown in eternal darkness!', duration_seconds: 10.0 },
-    { shot_id: 'shot_3', video_url: `/renders/${projectId}/shot_3.mp4`, thumbnail_url: '/shadow_weaver.jpg', speaker: 'Shadow Weaver', dialogue: 'Dimensional wards are failing! I will weave the binding nexus!', duration_seconds: 10.0 },
-    { shot_id: 'shot_4', video_url: `/renders/${projectId}/shot_4.mp4`, thumbnail_url: '/titaness.jpg', speaker: 'Titaness', dialogue: 'Let them come! They\'ll break against my gauntlets!', duration_seconds: 10.0 },
-    { shot_id: 'shot_5', video_url: `/renders/${projectId}/shot_5.mp4`, thumbnail_url: '/aero.jpg', speaker: 'Aero', dialogue: 'Flanking maneuver in three... two... strike now!', duration_seconds: 10.0 },
-    { shot_id: 'shot_6', video_url: `/renders/${projectId}/shot_6.mp4`, thumbnail_url: '/solaris.jpg', speaker: 'Solaris', dialogue: 'United, we stand against the night! Supernova strike!', duration_seconds: 10.0 },
-  ] : [];
-
-  const videoShots = (workflowState?.video_shots && workflowState.video_shots.length > 0) 
-    ? workflowState.video_shots 
-    : defaultShots;
-
-  const finalVideoUrl = workflowState?.final_video_url || (projectId ? `/renders/${projectId}/final_film.mp4` : null);
+  const videoShots = workflowState?.video_shots || [];
+  const finalVideoUrl = workflowState?.final_video_url || null;
   const isApproved = workflowState?.approval_states?.video_approved;
 
-  const [selectedShot, setSelectedShot] = useState<VideoShot | null>(null);
+  const [selectedShotId, setSelectedShotId] = useState<string | null>(null);
   const [, setIsPlayingMain] = useState(false);
   const [activeViewMode, setActiveViewMode] = useState<'film' | 'shots'>('film');
   const mainVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -52,7 +39,7 @@ export function VideoViewer({ workflowState, projectId, onRefreshState }: VideoV
     }
   };
 
-  const currentSelectedShot = selectedShot || videoShots[0] || null;
+  const currentSelectedShot = videoShots.find((s) => s.shot_id === selectedShotId) || videoShots[0] || null;
 
   const handleApproveVideo = async () => {
     if (!projectId) return;
@@ -198,7 +185,7 @@ export function VideoViewer({ workflowState, projectId, onRefreshState }: VideoV
             <div className="p-4 bg-stone-900 text-stone-200 border-t border-stone-800 flex items-center justify-between">
               <div>
                 <h3 className="font-serif font-bold text-white text-base">
-                  {activeViewMode === 'film' ? 'Master Assembled Film (Complete 1-Minute Cut)' : `${currentSelectedShot?.shot_id.toUpperCase()} — ${currentSelectedShot?.speaker}`}
+                  {activeViewMode === 'film' ? 'Master Assembled Film (Complete 1-Minute Cut)' : `${currentSelectedShot?.shot_id?.toUpperCase() || 'SHOT'} — ${currentSelectedShot?.speaker}`}
                 </h3>
                 <p className={`text-xs mt-0.5 line-clamp-1 italic ${
                   isDark ? 'text-[#F5E6D3]' : 'text-stone-300'
@@ -247,7 +234,7 @@ export function VideoViewer({ workflowState, projectId, onRefreshState }: VideoV
                 <div
                   key={shot.shot_id}
                   onClick={() => {
-                    setSelectedShot(shot);
+                    setSelectedShotId(shot.shot_id);
                     setActiveViewMode('shots');
                     setIsPlayingMain(false);
                   }}

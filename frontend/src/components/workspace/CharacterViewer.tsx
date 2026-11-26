@@ -33,7 +33,8 @@ export function CharacterViewer({ workflowState, projectId, onRefreshState }: Ch
     }
   }
 
-  const isApproved = workflowState?.approval_states?.characters_approved && (selectedVersion === currentVersion || currentVersion === 0);
+  const isViewingHistory = currentVersion > 0 && selectedVersion !== currentVersion;
+  const isApproved = workflowState?.approval_states?.characters_approved && !isViewingHistory;
   const [selectedCharacter, setSelectedCharacter] = useState<Character | null>(null);
   const [isRegenerating, setIsRegenerating] = useState(false);
   const [isApproving, setIsApproving] = useState(false);
@@ -41,7 +42,7 @@ export function CharacterViewer({ workflowState, projectId, onRefreshState }: Ch
   const [showFeedbackInput, setShowFeedbackInput] = useState(false);
 
   const handleApproveCast = async () => {
-    if (!projectId) return;
+    if (!projectId || isViewingHistory) return;
     setIsApproving(true);
     try {
       await apiClient.post(`/projects/${projectId}/messages/respond`, {
@@ -58,14 +59,14 @@ export function CharacterViewer({ workflowState, projectId, onRefreshState }: Ch
   };
 
   const handleRegenerate = async (charId: string) => {
-    if (!projectId) return;
+    if (!projectId || !charId || isViewingHistory) return;
     setIsRegenerating(true);
     try {
       const res = await apiClient.post(`/projects/${projectId}/characters/${charId}/regenerate`, {
         feedback: feedbackPrompt
       });
       if (res.data?.character) {
-        setSelectedCharacter(res.data.character);
+        setSelectedCharacter(prev => (prev && (prev.id === charId || (prev as any).character_id === charId) ? res.data.character : prev));
       }
       setFeedbackPrompt('');
       setShowFeedbackInput(false);
@@ -167,7 +168,15 @@ export function CharacterViewer({ workflowState, projectId, onRefreshState }: Ch
             return (
               <div
                 key={charId}
+                role="button"
+                tabIndex={0}
                 onClick={() => setSelectedCharacter({ ...char, id: charId })}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    setSelectedCharacter({ ...char, id: charId });
+                  }
+                }}
                 className={`group rounded-2xl shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden flex flex-col cursor-pointer border ${
                   isDark ? 'bg-[#121622] border-white/10 hover:border-orange-500/50' : 'bg-white border-stone-200/80 hover:border-orange-300'
                 }`}

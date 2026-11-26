@@ -463,7 +463,7 @@ def build_normalize_cmd(
         filter_complex = (
             f"[0:v]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},boxblur=20:5[bg];"
             f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease[fg];"
-            f"[bg][fg]overlay=(W-w)/2:(H-h)/2,fps={fps},setsar=1,setpts={setpts_expr}"
+            f"[bg][fg]overlay=(W-w)/2:(H-h)/2,setpts={setpts_expr},fps={fps},setsar=1"
         )
         if subtitle_file and os.path.exists(str(subtitle_file)):
             sub_path = Path(subtitle_file).resolve().as_posix().replace(":", "\\\\:")
@@ -476,13 +476,15 @@ def build_normalize_cmd(
             "-filter_complex", filter_complex,
             "-map", "[v]"
         ]
+        if include_audio:
+            cmd += ["-map", "0:a?"]
     else:
         vf_filters = [
             f"scale={w}:{h}:force_original_aspect_ratio=increase",
             f"crop={w}:{h}",
+            f"setpts={setpts_expr}",
             f"fps={fps}",
-            "setsar=1",
-            f"setpts={setpts_expr}"
+            "setsar=1"
         ]
         if subtitle_file and os.path.exists(str(subtitle_file)):
             sub_path = Path(subtitle_file).resolve().as_posix().replace(":", "\\\\:")
@@ -549,11 +551,12 @@ def normalize_clip(
 
     target_duration = float(duration) if duration is not None else float(info.duration)
     short_by = target_duration - info.duration
+    min_required_src = target_duration / settings.MAX_SLOWMO_FACTOR
 
-    # If shorter by more than 1.5s (beyond max 1.25x slowmo range), raise error
-    if short_by > 1.5:
+    # If shorter than slow-mo limit allows, raise error
+    if short_by > 1.5 or info.duration < (min_required_src - 0.01):
         raise ShotTooShortError(
-            f"clip is {info.duration:.2f}s but shot needs {target_duration:.2f}s (short by {short_by:.2f}s > 1.5s). Looping and padding are disabled."
+            f"clip is {info.duration:.2f}s but shot needs {target_duration:.2f}s (min {min_required_src:.2f}s at {settings.MAX_SLOWMO_FACTOR}x slow-mo). Looping and padding are disabled."
         )
 
     # Detect if aspect ratio is portrait (< 1.0) or non-widescreen (< 1.6)
@@ -742,6 +745,46 @@ def build_audio_track(
                 raw_concat_path.unlink()
             except Exception:
                 pass
+
+
+def normalize_master_loudness(src: Path | str, dst: Path | str) -> None:
+    """Two-pass EBU R128 loudness normalization (-16 LUFS) on a muxed video while copying video."""
+    import re
+    src_path = Path(src).resolve()
+    dst_path = Path(dst).resolve()
+    dst_path.parent.mkdir(parents=True, exist_ok=True)
+    sr = settings.AUDIO_SAMPLE_RATE
+
+    pass1_cmd = [
+        FFMPEG_BIN, "-hide_banner", "-i", str(src_path),
+        "-vn", "-af", f"loudnorm=I={settings.TARGET_LUFS}:TP={settings.TARGET_TRUE_PEAK}:LRA=11:print_format=json",
+        "-f", "null", "-"
+    ]
+    p1 = subprocess.run(pass1_cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=settings.FFMPEG_TIMEOUT_SEC)
+    json_match = re.search(r"\{[\s\S]*?\"input_i\"[\s\S]*?\}", p1.stderr)
+    if json_match:
+        stats = json.loads(json_match.group(0))
+        input_i = str(stats.get("input_i", "-inf")).strip()
+        if input_i != "-inf" and float(input_i) > -65.0:
+            af2 = (
+                f"loudnorm=I={settings.TARGET_LUFS}:TP={settings.TARGET_TRUE_PEAK}:LRA=11:"
+                f"measured_I={stats['input_i']}:measured_TP={stats['input_tp']}:"
+                f"measured_LRA={stats['input_lra']}:measured_thresh={stats['input_thresh']}:"
+                f"offset={stats['target_offset']}:linear=true,aresample={sr}"
+            )
+            _run(_ff(
+                "-i", str(src_path),
+                "-c:v", "copy",
+                "-af", af2,
+                "-c:a", "aac",
+                "-b:a", settings.AUDIO_BITRATE,
+                "-ar", str(sr),
+                "-ac", "2",
+                "-movflags", "+faststart",
+                str(dst_path)
+            ))
+            return
+    shutil.copyfile(src_path, dst_path)
 
 
 def mux(video: Path | str, audio: Path | str, dst: Path | str) -> None:

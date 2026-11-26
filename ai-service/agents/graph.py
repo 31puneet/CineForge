@@ -195,6 +195,13 @@ CRITICAL REQUIREMENTS:
                 else:
                     shots[-1]["duration_seconds"] = max(1.0, last_dur)
             shots = validate_and_split_dialogue(shots, max_wps=getattr(settings, "MAX_WORDS_PER_SECOND", 2.5))
+            for s in shots:
+                s_dur = float(s.get("duration_seconds", 0))
+                if s_dur < 1.0 or s_dur > PROVIDER_CLIP_SECONDS:
+                    raise ValueError(f"Shot duration {s_dur}s out of bounds [1.0, {PROVIDER_CLIP_SECONDS}]")
+            final_total = sum(float(s.get("duration_seconds", 0)) for s in shots)
+            if abs(final_total - duration) > 0.5:
+                raise ValueError(f"Final script duration {final_total:.1f}s does not match target {duration}s")
             script_data_dict["shots"] = shots
                 
         # Update state version
@@ -235,9 +242,9 @@ CRITICAL REQUIREMENTS:
                 # Append rejection feedback to messages silently so the LLM knows why it was rejected
                 state["messages"].append(HumanMessage(content=f"I rejected the script version {version} with this feedback: {reason}. Please revise it."))
         else:
-            # If no emitter (e.g. running outside API), just auto-approve for now
-            approved = True
-            state["approval_states"]["script_approved"] = True
+            # Per Agent.md, do not auto-approve generated artifacts; pause at END awaiting human approval.
+            state["approval_states"]["script_approved"] = False
+            break
 
     return state
 
@@ -363,8 +370,9 @@ For each character, provide:
                 rejection_feedback = reason
                 state["messages"].append(HumanMessage(content=f"I rejected the character list version {version} with this feedback: {reason}. Please revise it."))
         else:
-            approved = True
-            state["approval_states"]["characters_approved"] = True
+            # Per Agent.md, do not auto-approve generated artifacts; pause at END awaiting human approval.
+            state["approval_states"]["characters_approved"] = False
+            break
 
     return state
 
@@ -530,9 +538,9 @@ async def voiceover_agent_node(state: FilmGraphState, config: RunnableConfig):
                 rejection_feedback = reason
                 state["messages"].append(HumanMessage(content=f"User requested voiceover revisions: {reason}"))
         else:
-            approved = True
-            state["approval_states"]["characters_approved"] = True
-            state["approval_states"]["voiceovers_approved"] = True
+            # Per Agent.md, do not auto-approve generated artifacts; pause at END awaiting human approval.
+            state["approval_states"]["voiceovers_approved"] = False
+            break
 
     return state
 

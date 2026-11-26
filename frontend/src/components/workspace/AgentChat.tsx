@@ -49,7 +49,7 @@ export function AgentChat({ project, workflowState, onFetchState, onSwitchTab }:
     if (!workflowState) return '';
     const approvals = workflowState.approval_states || {};
     if (!approvals.script_approved && workflowState.script_data) return 'script';
-    if (!approvals.characters_approved && (workflowState.characters?.length ?? 0) > 0) return 'character';
+    if (!approvals.characters_approved && (workflowState.characters?.length ?? 0) > 0) return 'characters';
     if (!approvals.voiceovers_approved && (workflowState.voiceovers?.length ?? 0) > 0) return 'voiceover';
     if (!approvals.video_approved && (workflowState.video_shots?.length ?? 0) > 0) return 'video';
     if (approvals.video_approved && !approvals.assembly_confirmed) return 'assembly';
@@ -113,13 +113,19 @@ export function AgentChat({ project, workflowState, onFetchState, onSwitchTab }:
     setIsError(false);
     setErrorMessage('');
     const stageToRespond = effectiveApprovalStage || approvalStage || 'script';
+    const stageVersion =
+      stageToRespond === 'characters'
+        ? workflowState?.character_version || 1
+        : stageToRespond === 'script'
+          ? workflowState?.script_version || 1
+          : 1;
 
     try {
       await apiClient.post(`/projects/${projectId}/messages/respond`, {
         approved,
         reason: reasonText,
         stage: stageToRespond,
-        version: workflowState?.script_version || 1,
+        version: stageVersion,
       });
       setApprovalPending(false);
       setApprovalStage('');

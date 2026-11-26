@@ -83,8 +83,6 @@ def generate_ai_video_clip(
     Wan 2.2 Image-to-Video across a resilient pool of ZeroGPU spaces with automatic failover.
     Ensures continuous motion without freezing or static holds.
     """
-    global _token_quota_exhausted
-
     if not os.path.exists(image_path):
         logger.warning(f"Image not found at {image_path}")
         return None
@@ -115,6 +113,7 @@ def generate_ai_video_clip(
 
     seed_val = random.randint(1000, 999999)
     last_error = None
+    saw_quota_or_busy = False
     token_hash = _token_key(raw_token) if raw_token else None
 
     for space_id in available_spaces:
@@ -178,6 +177,7 @@ def generate_ai_video_clip(
                 last_error = err
 
                 if "exceeded your free zerogpu quota" in err_str or "quota" in err_str:
+                    saw_quota_or_busy = True
                     if token_val and token_hash:
                         with _state_lock:
                             _exhausted_token_hashes.add(token_hash)
@@ -189,6 +189,7 @@ def generate_ai_video_clip(
                     "rate limit", "exceeded", "timeout", "timed out", "504", "502"
                 ]) and not any(w in err_str for w in ["argument", "parameter", "keyword"])
                 if is_quota_or_busy:
+                    saw_quota_or_busy = True
                     record_space_cooldown(space_id, 120.0)
                     logger.warning(f"Space '{space_id}' unavailable/quota exceeded ({err}). Trying next candidate space...")
                 else:
@@ -196,5 +197,7 @@ def generate_ai_video_clip(
                 break  # Move to next space
 
     err_details = f": {last_error}" if last_error else ""
-    raise QuotaExceededError(f"All candidate ZeroGPU spaces failed or exhausted{err_details}")
+    if saw_quota_or_busy:
+        raise QuotaExceededError(f"All candidate ZeroGPU spaces failed or exhausted{err_details}")
+    raise RuntimeError(f"Video generation failed across candidate spaces{err_details}")
 

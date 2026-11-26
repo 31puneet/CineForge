@@ -171,6 +171,19 @@ def _escape_ass_text(text: str) -> str:
     )
 
 
+def _escape_ffmpeg_filter_path(path: Path | str) -> str:
+    """Escape special FFmpeg filtergraph characters in a filesystem path (e.g. for ass=...)."""
+    raw = Path(path).resolve().as_posix()
+    return (
+        raw.replace("\\", r"\\")
+        .replace(":", r"\:")
+        .replace(",", r"\,")
+        .replace("'", r"\'")
+        .replace("[", r"\[")
+        .replace("]", r"\]")
+    )
+
+
 def estimate_word_timings(
     dialogue: str,
     total_audio_duration: float,
@@ -324,7 +337,7 @@ Dialogue: 0,0:00:00.50,{format_ass_time(dur - 0.3)},Title,,0,0,0,,{{\\c&H004ED1F
 Dialogue: 0,0:00:00.70,{format_ass_time(dur - 0.3)},Subtitle,,0,0,-120,,{clean_sub}
 """
     ass_path.write_text(ass_content, encoding="utf-8")
-    escaped_ass = ass_path.resolve().as_posix().replace(":", "\\\\:")
+    escaped_ass = _escape_ffmpeg_filter_path(ass_path)
 
     fade_out_start = max(0.5, dur - 0.5)
     vf = f"ass={escaped_ass},fade=t=in:st=0:d=0.5,fade=t=out:st={fade_out_start:.2f}:d=0.5"
@@ -406,7 +419,7 @@ Dialogue: 0,0:00:00.50,{format_ass_time(dur - 0.3)},Cast,,0,0,0,,{starring_line}
 Dialogue: 0,0:00:00.70,{format_ass_time(dur - 0.3)},Studio,,0,0,-100,,Created with CineForge Studio
 """
     ass_path.write_text(ass_content, encoding="utf-8")
-    escaped_ass = ass_path.resolve().as_posix().replace(":", "\\\\:")
+    escaped_ass = _escape_ffmpeg_filter_path(ass_path)
 
     fade_out_start = max(0.5, dur - 0.5)
     vf = f"ass={escaped_ass},fade=t=in:st=0:d=0.5,fade=t=out:st={fade_out_start:.2f}:d=0.5"
@@ -478,7 +491,7 @@ def build_normalize_cmd(
             f"[bg][fg]overlay=(W-w)/2:(H-h)/2,setpts={setpts_expr},fps={fps},setsar=1"
         )
         if subtitle_file and os.path.exists(str(subtitle_file)):
-            sub_path = Path(subtitle_file).resolve().as_posix().replace(":", "\\\\:")
+            sub_path = _escape_ffmpeg_filter_path(subtitle_file)
             filter_complex += f",ass={sub_path}"
         filter_complex += "[v]"
 
@@ -499,7 +512,7 @@ def build_normalize_cmd(
             "setsar=1"
         ]
         if subtitle_file and os.path.exists(str(subtitle_file)):
-            sub_path = Path(subtitle_file).resolve().as_posix().replace(":", "\\\\:")
+            sub_path = _escape_ffmpeg_filter_path(subtitle_file)
             vf_filters.append(f"ass={sub_path}")
 
         cmd = [
@@ -612,8 +625,10 @@ def mux_shot(
     vid_dur = duration if duration is not None else v_info.duration
     sr = settings.AUDIO_SAMPLE_RATE
 
-    if audio_path and os.path.exists(str(audio_path)):
+    if audio_path:
         a_path = Path(audio_path).resolve()
+        if not a_path.exists():
+            raise FileNotFoundError(f"Voiceover audio file not found: {a_path}")
         ms = int(settings.SHOT_PRE_DELAY_SEC * 1000)
         af = (
             f"aresample={sr},aformat=channel_layouts=stereo,"
@@ -736,20 +751,23 @@ def build_audio_track(
             "-f", "null", "-"
         ]
         p1 = subprocess.run(pass1_cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=settings.FFMPEG_TIMEOUT_SEC)
+        if p1.returncode != 0:
+            raise MediaProcessingError(f"Audio track loudness pass1 failed (exit {p1.returncode}): {p1.stderr[-400:]}")
         json_match = re.search(r"\{[\s\S]*?\"input_i\"[\s\S]*?\}", p1.stderr)
-        if json_match:
-            stats = json.loads(json_match.group(0))
-            input_i = str(stats.get("input_i", "-inf")).strip()
-            if input_i != "-inf" and float(input_i) > -65.0:
-                af2 = (
-                    f"loudnorm=I={settings.TARGET_LUFS}:TP={settings.TARGET_TRUE_PEAK}:LRA=11:"
-                    f"measured_I={stats['input_i']}:measured_TP={stats['input_tp']}:"
-                    f"measured_LRA={stats['input_lra']}:measured_thresh={stats['input_thresh']}:"
-                    f"offset={stats['target_offset']}:linear=true,aresample={sr}"
-                )
-                _run(_ff("-i", str(raw_concat_path), "-af", af2, "-ar", str(sr), "-ac", "2", str(dst_path)))
-                return
-        # Fallback if track is completely silent or measurement unavailable
+        if not json_match:
+            raise MediaProcessingError(f"Audio track loudness pass1 produced no statistics: {p1.stderr[-400:]}")
+        stats = json.loads(json_match.group(0))
+        input_i = str(stats.get("input_i", "-inf")).strip()
+        if input_i != "-inf" and float(input_i) > -65.0:
+            af2 = (
+                f"loudnorm=I={settings.TARGET_LUFS}:TP={settings.TARGET_TRUE_PEAK}:LRA=11:"
+                f"measured_I={stats['input_i']}:measured_TP={stats['input_tp']}:"
+                f"measured_LRA={stats['input_lra']}:measured_thresh={stats['input_thresh']}:"
+                f"offset={stats['target_offset']}:linear=true,aresample={sr}"
+            )
+            _run(_ff("-i", str(raw_concat_path), "-af", af2, "-ar", str(sr), "-ac", "2", str(dst_path)))
+            return
+        # Fallback only when confirmed silent audio track (-inf or <= -65 LUFS)
         shutil.move(str(raw_concat_path), str(dst_path))
     finally:
         if raw_concat_path.exists():
@@ -773,29 +791,32 @@ def normalize_master_loudness(src: Path | str, dst: Path | str) -> None:
         "-f", "null", "-"
     ]
     p1 = subprocess.run(pass1_cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=settings.FFMPEG_TIMEOUT_SEC)
+    if p1.returncode != 0:
+        raise MediaProcessingError(f"Master loudness pass1 failed (exit {p1.returncode}): {p1.stderr[-400:]}")
     json_match = re.search(r"\{[\s\S]*?\"input_i\"[\s\S]*?\}", p1.stderr)
-    if json_match:
-        stats = json.loads(json_match.group(0))
-        input_i = str(stats.get("input_i", "-inf")).strip()
-        if input_i != "-inf" and float(input_i) > -65.0:
-            af2 = (
-                f"loudnorm=I={settings.TARGET_LUFS}:TP={settings.TARGET_TRUE_PEAK}:LRA=11:"
-                f"measured_I={stats['input_i']}:measured_TP={stats['input_tp']}:"
-                f"measured_LRA={stats['input_lra']}:measured_thresh={stats['input_thresh']}:"
-                f"offset={stats['target_offset']}:linear=true,aresample={sr}"
-            )
-            _run(_ff(
-                "-i", str(src_path),
-                "-c:v", "copy",
-                "-af", af2,
-                "-c:a", "aac",
-                "-b:a", settings.AUDIO_BITRATE,
-                "-ar", str(sr),
-                "-ac", "2",
-                "-movflags", "+faststart",
-                str(dst_path)
-            ))
-            return
+    if not json_match:
+        raise MediaProcessingError(f"Master loudness pass1 produced no statistics: {p1.stderr[-400:]}")
+    stats = json.loads(json_match.group(0))
+    input_i = str(stats.get("input_i", "-inf")).strip()
+    if input_i != "-inf" and float(input_i) > -65.0:
+        af2 = (
+            f"loudnorm=I={settings.TARGET_LUFS}:TP={settings.TARGET_TRUE_PEAK}:LRA=11:"
+            f"measured_I={stats['input_i']}:measured_TP={stats['input_tp']}:"
+            f"measured_LRA={stats['input_lra']}:measured_thresh={stats['input_thresh']}:"
+            f"offset={stats['target_offset']}:linear=true,aresample={sr}"
+        )
+        _run(_ff(
+            "-i", str(src_path),
+            "-c:v", "copy",
+            "-af", af2,
+            "-c:a", "aac",
+            "-b:a", settings.AUDIO_BITRATE,
+            "-ar", str(sr),
+            "-ac", "2",
+            "-movflags", "+faststart",
+            str(dst_path)
+        ))
+        return
     shutil.copyfile(src_path, dst_path)
 
 

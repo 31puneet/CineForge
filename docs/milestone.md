@@ -93,7 +93,7 @@ This document is the definitive engineering roadmap for CineForge. It translates
 **What it does:** Extracts speakers from the script and generates consistent visual reference images for them.
 * [x] **Character Extraction**: FastAPI analyzes `script_data` and identifies unique speakers.
 * [x] **Image Generation Adapter**: Implement `BaseImageProvider` and a concrete adapter for an image generation API.
-* [x] **Character Node**: Implement `generate_characters` LangGraph node. Loops through characters, generates prompts, calls Image API, uploads images to MinIO, and updates `FilmGraphState.characters`.
+* [x] **Character Node**: Implement `generate_characters` LangGraph node. Loops through characters, generates prompts, calls Image API, saves portraits locally and uploads to MinIO when `STORAGE_MODE=minio`, and updates `FilmGraphState.characters`.
 * [x] **Character UI**: Build a grid of "Character Cards" in the React Right Panel. Show the reference image, name, and description.
 * [x] **Targeted Regeneration**: Implement per-character rejection. If Character A is bad, Node.js API `/api/projects/:id/characters/:charId/regenerate` triggers FastAPI to *only* regenerate Character A.
 

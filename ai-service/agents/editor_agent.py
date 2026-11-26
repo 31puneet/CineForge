@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 from langchain_core.runnables import RunnableConfig
 
-from core.config import settings
+from core.config import settings, validate_safe_id, resolve_confined_path
 from core.media_processor import (
     probe,
     normalize_clip,
@@ -47,7 +47,7 @@ async def assemble_video(state: FilmGraphState, config: RunnableConfig) -> FilmG
     Assembles normalized individual shots into the final master film.
     """
     emitter = config.get("configurable", {}).get("emitter")
-    project_id = state.get("project_id", "default_project")
+    project_id = validate_safe_id(str(state.get("project_id", "default_project")), "project_id")
 
     async with _get_assembly_lock(project_id):
         return await _assemble_video_locked(state, config, emitter, project_id)
@@ -63,9 +63,10 @@ async def _assemble_video_locked(state: FilmGraphState, config: RunnableConfig, 
     video_shots = {vs.get("shot_id"): vs for vs in state.get("video_shots", [])}
     voiceovers = {vo.get("shot_id"): vo for vo in state.get("voiceovers", [])}
 
-    renders_dir = Path(os.path.abspath(os.path.join(
-        os.path.dirname(__file__), "..", "..", "frontend", "public", "renders", project_id
+    renders_root = Path(os.path.abspath(os.path.join(
+        os.path.dirname(__file__), "..", "..", "frontend", "public", "renders"
     )))
+    renders_dir = resolve_confined_path(renders_root, project_id)
     renders_dir.mkdir(parents=True, exist_ok=True)
 
     scratch_dir = renders_dir / f"scratch_{uuid4().hex[:8]}"
@@ -77,23 +78,26 @@ async def _assemble_video_locked(state: FilmGraphState, config: RunnableConfig, 
         valid_clips: Dict[str, Path] = {}
         
         for idx, shot in enumerate(shots):
-            shot_id = shot.get("id") or shot.get("shot_id") or f"shot_{idx+1}"
+            shot_id = validate_safe_id(str(shot.get("id") or shot.get("shot_id") or f"shot_{idx+1}"), "shot_id")
+            shot["shot_id"] = shot_id
             v_record = video_shots.get(shot_id)
             clip_path = None
 
             # Look for processed mp4 first, falling back to raw mp4 or recorded url
-            candidate_local = renders_dir / f"{shot_id}.mp4"
+            candidate_local = resolve_confined_path(renders_dir, f"{shot_id}.mp4")
             if not candidate_local.exists():
-                candidate_local = renders_dir / f"{shot_id}_raw.mp4"
+                candidate_local = resolve_confined_path(renders_dir, f"{shot_id}_raw.mp4")
 
             if candidate_local.exists():
                 clip_path = candidate_local
             elif v_record and v_record.get("video_url"):
-                # URL might be relative
-                url = v_record["video_url"]
+                url = str(v_record["video_url"])
                 if url.startswith("/renders/"):
-                    rel = url.split(f"/renders/{project_id}/")[-1]
-                    local_cand = renders_dir / rel
+                    prefix = f"/renders/{project_id}/"
+                    if not url.startswith(prefix):
+                        raise MediaProcessingError(f"Clip path for {shot_id} escapes project directory")
+                    rel = url[len(prefix):]
+                    local_cand = resolve_confined_path(renders_dir, rel)
                     if local_cand.exists():
                         clip_path = local_cand
 
@@ -268,7 +272,21 @@ async def _assemble_video_locked(state: FilmGraphState, config: RunnableConfig, 
             norm_vid = normalized_clips[clip_counter]
             clip_counter += 1
 
-            vo_audio_path = renders_dir / f"audio_{shot_id}.mp3"
+            vo_record = voiceovers.get(shot_id)
+            vo_audio_path: Optional[Path] = renders_dir / f"audio_{shot_id}.mp3"
+            if not vo_audio_path.exists() and vo_record and vo_record.get("audio_url"):
+                vo_url = str(vo_record["audio_url"])
+                if vo_url.startswith("/renders/"):
+                    prefix = f"/renders/{project_id}/"
+                    if not vo_url.startswith(prefix):
+                        raise MediaProcessingError(f"Voiceover path for {shot_id} escapes project directory")
+                    rel_vo = vo_url[len(prefix):]
+                    cand_vo = (renders_dir / rel_vo).resolve()
+                    if renders_dir.resolve() not in cand_vo.parents:
+                        raise MediaProcessingError(f"Voiceover path for {shot_id} escapes renders directory")
+                    if cand_vo.exists():
+                        vo_audio_path = cand_vo
+
             if vo_audio_path.exists():
                 vo_info = await asyncio.to_thread(probe, vo_audio_path)
                 needed_dur = vo_info.duration + settings.SHOT_PRE_DELAY_SEC
@@ -276,11 +294,16 @@ async def _assemble_video_locked(state: FilmGraphState, config: RunnableConfig, 
                     raise DurationMismatchError(
                         f"Voiceover for {shot_id} ({vo_info.duration:.2f}s + {settings.SHOT_PRE_DELAY_SEC:.2f}s pre-delay = {needed_dur:.2f}s) exceeds shot duration {target_dur:.2f}s"
                     )
+            elif vo_record and vo_record.get("audio_url"):
+                raise MediaProcessingError(f"Missing voiceover audio file for {shot_id}: {vo_audio_path}")
+            else:
+                vo_audio_path = None
+
             shot_muxed = scratch_dir / f"shot_{idx+1}_muxed.mp4"
             await asyncio.to_thread(
                 mux_shot,
                 norm_vid,
-                vo_audio_path if vo_audio_path.exists() else None,
+                vo_audio_path,
                 shot_muxed,
                 duration=target_dur
             )

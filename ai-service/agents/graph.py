@@ -1,8 +1,12 @@
 import os
+import re
+import hashlib
 import json
 import copy
 import math
 import asyncio
+from pathlib import Path
+from typing import Optional
 from pydantic import ValidationError
 from langgraph.graph import StateGraph, END
 from langchain_core.messages import AIMessage, SystemMessage, HumanMessage
@@ -14,7 +18,7 @@ from core.storage import media_storage
 from core.job_queue import run_parallel_shot_tasks, publish_job_status
 from core.media_processor import probe, FFMPEG_BIN
 from schemas.llm import LLMScriptData, LLMCharacterData
-from core.config import settings
+from core.config import settings, validate_safe_id, resolve_confined_path
 from agents.editor_agent import assemble_video
 
 PROVIDER_CLIP_SECONDS: float = getattr(settings, "PROVIDER_CLIP_SECONDS", 8.0)
@@ -37,11 +41,16 @@ def validate_and_split_dialogue(shots: list[dict], max_wps: float = 2.5) -> list
     margin_sec = getattr(settings, "SHOT_PRE_DELAY_SEC", 0.5) + getattr(settings, "SHOT_POST_TAIL_SEC", 1.5)
     for i, shot in enumerate(shots):
         dur = float(shot.get("duration_seconds", PROVIDER_CLIP_SECONDS))
-        speech_budget = max(0.5, dur - margin_sec)
-        max_words = max(3, int(speech_budget * max_wps))
+        speech_budget = max(0.0, dur - margin_sec)
+        max_words = max(0, int(speech_budget * max_wps))
         dialogue = (shot.get("dialogue") or "").strip()
         words = dialogue.split()
         if len(words) > max_words:
+            if max_words == 0 and len(words) > 0:
+                if i + 1 >= len(shots):
+                    raise ValueError(
+                        f"Shot {i+1} duration ({dur:.1f}s) leaves no speech budget for {len(words)} words on the final shot."
+                    )
             if i + 1 >= len(shots):
                 raise ValueError(
                     f"Shot {i+1} dialogue ({len(words)} words) exceeds {max_words} words on the final shot."
@@ -65,6 +74,62 @@ def validate_and_split_dialogue(shots: list[dict], max_wps: float = 2.5) -> list
                 next_shot["speaker"] = curr_speaker
     return shots
 
+
+def _normalize_script_shots(shots: list[dict], duration: float) -> list[dict]:
+    """Adjust shot durations to sum to target duration cleanly within [1.0, PROVIDER_CLIP_SECONDS]."""
+    if not shots:
+        raise ValueError("Script must contain at least one shot.")
+    for s in shots:
+        dur_val = float(s.get("duration_seconds", PROVIDER_CLIP_SECONDS))
+        s["duration_seconds"] = max(1.0, min(PROVIDER_CLIP_SECONDS, dur_val))
+
+    total_dur = round(sum(s["duration_seconds"] for s in shots), 1)
+    if total_dur != round(float(duration), 1):
+        diff = float(duration) - total_dur
+        add_per = round(diff / len(shots), 1)
+        for s in shots[:-1]:
+            s["duration_seconds"] = round(
+                max(1.0, min(PROVIDER_CLIP_SECONDS, s["duration_seconds"] + add_per)),
+                1,
+            )
+        last_dur = round(float(duration) - sum(s["duration_seconds"] for s in shots[:-1]), 1)
+        if last_dur > PROVIDER_CLIP_SECONDS:
+            excess = round(last_dur - PROVIDER_CLIP_SECONDS, 1)
+            shots[-1]["duration_seconds"] = PROVIDER_CLIP_SECONDS
+            for s in reversed(shots[:-1]):
+                if excess <= 0:
+                    break
+                headroom = round(PROVIDER_CLIP_SECONDS - s["duration_seconds"], 1)
+                if headroom > 0:
+                    allocated = min(headroom, excess)
+                    s["duration_seconds"] = round(s["duration_seconds"] + allocated, 1)
+                    excess = round(excess - allocated, 1)
+        elif last_dur < 1.0:
+            deficit = round(1.0 - last_dur, 1)
+            shots[-1]["duration_seconds"] = 1.0
+            for s in reversed(shots[:-1]):
+                if deficit <= 0:
+                    break
+                reducible = round(s["duration_seconds"] - 1.0, 1)
+                if reducible > 0:
+                    take = min(reducible, deficit)
+                    s["duration_seconds"] = round(s["duration_seconds"] - take, 1)
+                    deficit = round(deficit - take, 1)
+            if deficit > 0:
+                shots[-1]["duration_seconds"] = round(1.0 - deficit, 1)
+        else:
+            shots[-1]["duration_seconds"] = last_dur
+
+    for s in shots:
+        s_dur = float(s.get("duration_seconds", 0))
+        if s_dur < 1.0 or s_dur > PROVIDER_CLIP_SECONDS:
+            raise ValueError(f"Shot duration {s_dur}s out of bounds [1.0, {PROVIDER_CLIP_SECONDS}]")
+    final_total = sum(float(s.get("duration_seconds", 0)) for s in shots)
+    if abs(final_total - float(duration)) > 0.5:
+        raise ValueError(f"Final script duration {final_total:.1f}s does not match target {duration}s")
+    return shots
+
+
 async def script_agent_node(state: FilmGraphState, config: RunnableConfig):
     emitter = config["configurable"].get("emitter")
     
@@ -73,17 +138,20 @@ async def script_agent_node(state: FilmGraphState, config: RunnableConfig):
         await emitter.push("status", content="Analyzing your prompt...")
         await emitter.push("plan", steps=["Script Generation", "Character Design", "Voiceover", "Video Generation", "Editing"], current="Script Generation")
 
-    # Extract the user's creative prompt
-    user_prompt_text = ""
-    for m in reversed(state.get("messages", [])):
+    # Separate the original story prompt from later revision feedback messages
+    human_messages: list[str] = []
+    skip_words = {"continue", "proceed", "next", "ok", "yes", "go on", "yep", "sure", "looks good", "approve", "approved", "perfect", "good", "move on", "advance"}
+    for m in state.get("messages", []):
         if isinstance(m, HumanMessage) or getattr(m, "role", "") == "user":
-            content = extract_text_content(m.content if hasattr(m, "content") else str(m))
-            clean = content.strip().lower()
-            if len(content) > 1 and clean not in ["continue", "proceed", "next", "ok", "yes", "go on"]:
-                user_prompt_text = content
-                break
-    if not user_prompt_text and state.get("messages"):
-        user_prompt_text = extract_text_content(state["messages"][-1].content)
+            content = extract_text_content(m.content if hasattr(m, "content") else str(m)).strip()
+            clean = content.lower().rstrip(".!")
+            if len(content) > 1 and clean not in skip_words:
+                human_messages.append(content)
+
+    original_story_text = human_messages[0] if human_messages else ""
+    revision_feedback_text = "\n".join(human_messages[1:]).strip() if len(human_messages) > 1 else ""
+    if not original_story_text and state.get("messages"):
+        original_story_text = extract_text_content(state["messages"][-1].content)
 
     duration = state.get("metadata", {}).get("targetDurationSeconds", 60)
     adapter = GeminiAdapter()
@@ -94,7 +162,7 @@ async def script_agent_node(state: FilmGraphState, config: RunnableConfig):
         if emitter:
             await emitter.push("status", content="Generating script..." if state.get("script_version", 0) == 0 else "Revising script based on your feedback...")
             
-        is_first_message = len(state["messages"]) == 1
+        is_first_message = len(human_messages) <= 1 and not state.get("script_data")
         
         if is_first_message:
             system_prompt = f"""You are an expert AI Film Director and Screenwriter.
@@ -111,10 +179,15 @@ Brainstorm the script outline line by line adhering strictly to the user's idea.
         else:
             previous_script_json = json.dumps(state.get("script_data", {}), indent=2)
             system_prompt = f"""You are an expert AI Film Director and Screenwriter.
-CRITICAL MANDATE: You MUST remain 100% faithful and dedicated to the user's specific story request, characters, genre, and tone.
-- If the user asks for specific characters, you MUST feature THOSE EXACT CHARACTERS in your script.
+CRITICAL MANDATE: You MUST remain 100% faithful and dedicated to the user's original story, characters, genre, and tone, while applying the requested revision feedback.
+Original Story Request:
+{original_story_text}
+
+Revision Feedback to Apply:
+{revision_feedback_text or 'Refine and polish the script.'}
+
 - Target duration: {duration} seconds. Structure into {num_shots} shots, each around {PROVIDER_CLIP_LENGTH_SEC:.1f} seconds to match video provider clip length.
-- Incorporate user feedback faithfully into the revision based on previous script:
+- Incorporate the revision feedback into the previous script below:
 {previous_script_json}
 Output your thoughts line by line."""
 
@@ -133,81 +206,50 @@ Output your thoughts line by line."""
             think_response = AIMessage(content=extract_text_content(response.content))
         
         # 2. Structured Output phase
-        json_prompt = f"""User Story Request: '{user_prompt_text}'
+        revision_clause = f"\nRevision Feedback to Apply to the Original Story: '{revision_feedback_text}'\n" if revision_feedback_text else ""
+        json_prompt = f"""Original Story Request: '{original_story_text}'{revision_clause}
 
 Based on this brainstorm:
 {think_response.content}
 
-Generate the final structured movie script conforming to the schema and strictly adhering to the user's story and characters ('{user_prompt_text}').
+Generate the final structured movie script conforming to the schema and strictly adhering to the original story and characters ('{original_story_text}').
 CRITICAL REQUIREMENTS:
 1. Adhere strictly to the requested characters and setting. DO NOT drift into unrelated themes.
-2. Structure the movie into dramatic, well-paced shots (around {num_shots} shots).
+2. Structure the movie into exactly {num_shots} dramatic, well-paced shots.
 3. The total film duration across all shots combined MUST match the target duration of {duration} seconds.
 4. Each shot must have a duration around {PROVIDER_CLIP_LENGTH_SEC:.1f} seconds matching provider video clip length.
-5. Each shot with dialogue must specify the character's exact name in 'speaker' and their spoken line in 'dialogue'.
+5. Each shot with dialogue must specify the character's exact name in 'speaker' and their spoken line in 'dialogue' (keep dialogue concise so it fits within each shot's speech budget).
 6. Child & Family-Friendly Orientation: For kid/family themes, emphasize heartwarming friendship, playful banter, fun adventure, and cute character interactions that delight young audiences."""
         
-        # Retry mechanism for malformed JSON and shot count validation
+        # Retry mechanism for malformed JSON, shot count, duration bounds, and dialogue fitting
         script_data_dict = None
         max_retries = 3
+        max_wps = getattr(settings, "MAX_WORDS_PER_SECOND", 2.5)
         for attempt in range(max_retries):
             try:
                 structured_data = await adapter.aget_structured_output(json_prompt, LLMScriptData)
-                if len(structured_data.shots) < num_shots:
-                    if attempt == max_retries - 1:
+                raw_count = len(structured_data.shots)
+                if raw_count < num_shots:
+                    raise ValueError(
+                        f"Model generated only {raw_count} shots, but {num_shots} are required."
+                    )
+                if raw_count > num_shots:
+                    can_keep_all = (raw_count * 1.0 <= duration <= raw_count * PROVIDER_CLIP_SECONDS)
+                    if attempt < max_retries - 1 or not can_keep_all:
                         raise ValueError(
-                            f"Model generated only {len(structured_data.shots)} shots, but {num_shots} are required. Retries exhausted."
+                            f"Model generated {raw_count} shots, expected {num_shots} shots so resolution fits the timeline."
                         )
-                    json_prompt += f"\n\nPrevious attempt generated only {len(structured_data.shots)} shots. You MUST generate at least {num_shots} distinct, fully developed shots."
-                    continue
-                script_data_dict = structured_data.model_dump()
-                
 
-                        
+                candidate_dict = structured_data.model_dump()
+                shots = _normalize_script_shots(candidate_dict["shots"], duration)
+                shots = validate_and_split_dialogue(shots, max_wps=max_wps)
+                candidate_dict["shots"] = shots
+                script_data_dict = candidate_dict
                 break
             except (json.JSONDecodeError, ValidationError, ValueError) as e:
                 if attempt == max_retries - 1:
                     raise Exception(f"Failed to generate structured script after {max_retries} attempts: {str(e)}")
-                # Append error feedback and try again
-                json_prompt += f"\n\nYour previous output failed with error: {str(e)}. Please try again and follow the rules strictly."
-
-        # Ensure shot durations sum to target duration, each <= PROVIDER_CLIP_SECONDS
-        if script_data_dict and "shots" in script_data_dict:
-            shots = script_data_dict["shots"]
-            if len(shots) > num_shots:
-                shots = shots[:num_shots]
-            for s in shots:
-                if s.get("duration_seconds", 0) > PROVIDER_CLIP_SECONDS:
-                    s["duration_seconds"] = PROVIDER_CLIP_SECONDS
-            total_dur = sum(s.get("duration_seconds", PROVIDER_CLIP_SECONDS) for s in shots)
-            if total_dur != duration and shots:
-                diff = duration - total_dur
-                add_per = round(diff / len(shots), 1)
-                for s in shots[:-1]:
-                    s["duration_seconds"] = max(1.0, min(PROVIDER_CLIP_SECONDS, s.get("duration_seconds", PROVIDER_CLIP_SECONDS) + add_per))
-                last_dur = round(duration - sum(s["duration_seconds"] for s in shots[:-1]), 1)
-                if last_dur > PROVIDER_CLIP_SECONDS:
-                    excess = last_dur - PROVIDER_CLIP_SECONDS
-                    shots[-1]["duration_seconds"] = PROVIDER_CLIP_SECONDS
-                    for s in reversed(shots[:-1]):
-                        if excess <= 0:
-                            break
-                        headroom = PROVIDER_CLIP_SECONDS - s["duration_seconds"]
-                        if headroom > 0:
-                            allocated = min(headroom, excess)
-                            s["duration_seconds"] = round(s["duration_seconds"] + allocated, 1)
-                            excess -= allocated
-                else:
-                    shots[-1]["duration_seconds"] = max(1.0, last_dur)
-            shots = validate_and_split_dialogue(shots, max_wps=getattr(settings, "MAX_WORDS_PER_SECOND", 2.5))
-            for s in shots:
-                s_dur = float(s.get("duration_seconds", 0))
-                if s_dur < 1.0 or s_dur > PROVIDER_CLIP_SECONDS:
-                    raise ValueError(f"Shot duration {s_dur}s out of bounds [1.0, {PROVIDER_CLIP_SECONDS}]")
-            final_total = sum(float(s.get("duration_seconds", 0)) for s in shots)
-            if abs(final_total - duration) > 0.5:
-                raise ValueError(f"Final script duration {final_total:.1f}s does not match target {duration}s")
-            script_data_dict["shots"] = shots
+                json_prompt += f"\n\nYour previous output failed with error: {str(e)}. Please fix this and try again."
                 
         # Update state version
         version = state.get("script_version", 0) + 1
@@ -233,7 +275,7 @@ CRITICAL REQUIREMENTS:
             await emitter.push("approval_request", stage="script")
             
             # Pause and wait for response
-            response_data = await emitter.wait_for_approval()
+            response_data = await emitter.wait_for_approval("script")
             approved = response_data.get("approved", False)
             reason = response_data.get("reason", "")
             
@@ -307,15 +349,16 @@ For each character, provide:
         char_list = script_data_dict.get("characters", []) if script_data_dict else []
 
         # Generate character concept portraits and persist via storage adapter
-        pid = state.get("project_id", "default_project")
+        pid = validate_safe_id(str(state.get("project_id", "default_project")), "project_id")
         char_refs_map = (state.get("metadata", {}) or {}).get("character_references", {}) or {}
-        renders_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "public", "renders", pid))
+        renders_root = Path(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "public", "renders")))
+        renders_dir = str(resolve_confined_path(renders_root, pid))
         os.makedirs(renders_dir, exist_ok=True)
 
         import base64
         import httpx
         for idx, char in enumerate(char_list):
-            char_id = char.get("character_id") or char.get("id") or f"char_{idx+1}"
+            char_id = validate_safe_id(str(char.get("character_id") or char.get("id") or f"char_{idx+1}"), "character_id")
             char["id"] = char_id
             char["character_id"] = char_id
             per_char_refs = char_refs_map.get(char_id) or char_refs_map.get(char.get("name", "")) or []
@@ -324,10 +367,10 @@ For each character, provide:
             prompt_text = char.get("image_prompt") or char.get("visual_description") or char.get("description") or char.get("name")
             if prompt_text:
                 try:
-                    seed = abs(hash(f"{pid}_{char_id}")) % 1000000
+                    seed = abs(hash(f"{pid}_{char_id}_v{version}")) % 1000000
                     img_data = await image_adapter.generate_image(prompt_text, seed=seed, aspect_ratio="1:1")
                     if img_data:
-                        char_file = os.path.join(renders_dir, f"{char_id}.jpg")
+                        char_file = str(resolve_confined_path(renders_dir, f"{char_id}_v{version}.jpg"))
                         if img_data.startswith("data:image") and "base64," in img_data:
                             b64_str = img_data.split("base64,", 1)[1]
                             raw_b = base64.b64decode(b64_str)
@@ -386,7 +429,7 @@ For each character, provide:
             await emitter.push("message", content=f"I have designed the characters (v{version}). Take a look here:", link={"label": char_file_name, "target": "characters_tab"})
             await emitter.push("approval_request", stage="characters")
 
-            response_data = await emitter.wait_for_approval()
+            response_data = await emitter.wait_for_approval("characters")
             approved = response_data.get("approved", False)
             reason = response_data.get("reason", "")
 
@@ -407,10 +450,24 @@ For each character, provide:
     return state
 
 
+def match_role_override_rule(speaker_name: str) -> Optional[dict]:
+    """Match configured role overrides using whole-word boundaries to prevent substring false positives."""
+    spk_key = (speaker_name or "").lower().strip()
+    if not spk_key:
+        return None
+    role_overrides = load_voice_presets_config().get("role_overrides", [])
+    for rule in role_overrides:
+        for kw in rule.get("keywords", []):
+            kw_clean = str(kw).strip().lower()
+            if kw_clean and re.search(rf"\b{re.escape(kw_clean)}\b", spk_key):
+                return rule
+    return None
+
+
 async def voiceover_agent_node(state: FilmGraphState, config: RunnableConfig):
     emitter = config["configurable"].get("emitter")
     update_state_fn = config["configurable"].get("update_state")
-    project_id = state.get("project_id", "default_project")
+    project_id = validate_safe_id(str(state.get("project_id", "default_project")), "project_id")
 
     state["current_stage"] = "voiceover"
     await _safe_update_state(update_state_fn, state)
@@ -425,6 +482,9 @@ async def voiceover_agent_node(state: FilmGraphState, config: RunnableConfig):
 
     approved = False
     rejection_feedback = None
+    renders_root = Path(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "public", "renders")))
+    renders_dir = str(resolve_confined_path(renders_root, project_id))
+    os.makedirs(renders_dir, exist_ok=True)
 
     while not approved:
         if emitter:
@@ -437,7 +497,7 @@ async def voiceover_agent_node(state: FilmGraphState, config: RunnableConfig):
         for idx, shot in enumerate(shots):
             speaker = shot.get("speaker")
             dialogue = shot.get("dialogue")
-            shot_id = shot.get("shot_id") or f"shot_{idx+1}"
+            shot_id = validate_safe_id(str(shot.get("shot_id") or f"shot_{idx+1}"), "shot_id")
 
             if not dialogue or dialogue.strip() in ["", "None", "none"]:
                 continue
@@ -460,17 +520,16 @@ async def voiceover_agent_node(state: FilmGraphState, config: RunnableConfig):
                     gender=char_info.get("gender", "")
                 )
 
-                role_overrides = load_voice_presets_config().get("role_overrides", [])
-                for rule in role_overrides:
-                    if any(kw in spk_key for kw in rule.get("keywords", [])):
-                        voice_config = {
-                            "voice": rule["voice"],
-                            "pitch": rule["pitch"],
-                            "rate": rule["rate"],
-                            "label": rule["label"],
-                            "gender": rule["gender"],
-                        }
-                        break
+                matched_rule = match_role_override_rule(speaker or "")
+                if matched_rule:
+                    voice_config = {
+                        "voice": matched_rule["voice"],
+                        "fallback_voice": matched_rule["voice"],
+                        "pitch": matched_rule["pitch"],
+                        "rate": matched_rule["rate"],
+                        "label": matched_rule["label"],
+                        "gender": matched_rule["gender"],
+                    }
 
                 assigned_speaker_voices[spk_key] = voice_config
 
@@ -498,37 +557,31 @@ async def voiceover_agent_node(state: FilmGraphState, config: RunnableConfig):
                 pitch=pitch,
                 rate=rate
             )
+            if not audio_url or not str(audio_url).strip():
+                raise RuntimeError(f"Audio provider returned empty speech output for Shot {idx+1} ({shot_id})")
 
             words = len(dialogue.split())
             est_duration = max(1.5, round(words / 2.5, 1))
 
             # Persist audio clip to disk & upload to MinIO when enabled
             if audio_url and "base64," in audio_url:
-                try:
-                    import base64
-                    renders_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "public", "renders", project_id))
-                    os.makedirs(renders_dir, exist_ok=True)
-                    audio_disk_path = os.path.join(renders_dir, f"audio_{shot_id}.mp3")
-                    b64_part = audio_url.split("base64,", 1)[1]
-                    with open(audio_disk_path, "wb") as af:
-                        af.write(base64.b64decode(b64_part))
-                    try:
-                        audio_info = probe(audio_disk_path)
-                        if audio_info.duration > 0:
-                            est_duration = round(audio_info.duration, 2)
-                    except Exception:
-                        pass
-                    audio_url = media_storage.upload_file(
-                        audio_disk_path,
-                        project_id=project_id,
-                        object_key=f"projects/{project_id}/voiceovers/{shot_id}/v1/audio.mp3",
-                        bucket="cineforge-assets",
-                        content_type="audio/mpeg",
-                        asset_type="audio",
-                        version=1,
-                    )
-                except Exception as save_err:
-                    print(f"[Voiceover Agent] Could not save audio file to disk: {save_err}")
+                import base64
+                audio_disk_path = str(resolve_confined_path(renders_dir, f"audio_{shot_id}.mp3"))
+                b64_part = audio_url.split("base64,", 1)[1]
+                with open(audio_disk_path, "wb") as af:
+                    af.write(base64.b64decode(b64_part))
+                audio_info = await asyncio.to_thread(probe, audio_disk_path)
+                if audio_info.duration > 0:
+                    est_duration = round(audio_info.duration, 2)
+                audio_url = media_storage.upload_file(
+                    audio_disk_path,
+                    project_id=project_id,
+                    object_key=f"projects/{project_id}/voiceovers/{shot_id}/v1/audio.mp3",
+                    bucket="cineforge-assets",
+                    content_type="audio/mpeg",
+                    asset_type="audio",
+                    version=1,
+                )
 
             voiceover_list.append({
                 "shot_id": shot_id,
@@ -538,7 +591,8 @@ async def voiceover_agent_node(state: FilmGraphState, config: RunnableConfig):
                 "voice_name": voice_config.get("label", voice_config["voice"]),
                 "voice_id": voice_config.get("voice", "en-US-ChristopherNeural"),
                 "audio_url": audio_url,
-                "duration_seconds": est_duration
+                "duration_seconds": est_duration,
+                "version": 1,
             })
 
         state["voiceovers"] = voiceover_list
@@ -555,7 +609,7 @@ async def voiceover_agent_node(state: FilmGraphState, config: RunnableConfig):
             )
             await emitter.push("approval_request", stage="voiceover")
 
-            response_data = await emitter.wait_for_approval()
+            response_data = await emitter.wait_for_approval("voiceover")
             approved = response_data.get("approved", False)
             reason = response_data.get("reason", "")
 
@@ -576,10 +630,15 @@ async def voiceover_agent_node(state: FilmGraphState, config: RunnableConfig):
     return state
 
 
+def _compute_shot_input_hash(visual_desc: str, dialogue: str, speaker: str, duration: float) -> str:
+    payload = f"{speaker}|{round(duration, 2)}|{visual_desc}|{dialogue}"
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
 async def video_agent_node(state: FilmGraphState, config: RunnableConfig):
     emitter = config["configurable"].get("emitter")
     update_state_fn = config["configurable"].get("update_state")
-    project_id = state.get("project_id", "default_project")
+    project_id = validate_safe_id(str(state.get("project_id", "default_project")), "project_id")
 
     if emitter:
         await emitter.push("status", content="Starting Stage 4: Parallel Video Generation...")
@@ -588,7 +647,8 @@ async def video_agent_node(state: FilmGraphState, config: RunnableConfig):
     shots = state.get("script_data", {}).get("shots", [])
     existing_shots = {vs.get("shot_id"): vs for vs in state.get("video_shots", [])}
 
-    renders_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "public", "renders", project_id))
+    renders_root = Path(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "public", "renders")))
+    renders_dir = str(resolve_confined_path(renders_root, project_id))
     os.makedirs(renders_dir, exist_ok=True)
 
     import subprocess
@@ -610,20 +670,36 @@ async def video_agent_node(state: FilmGraphState, config: RunnableConfig):
 
     # Pre-populate queued records so UI can show per-shot status immediately
     for idx, shot in enumerate(shots):
-        shot_id = shot.get("shot_id") or shot.get("id") or f"shot_{idx+1}"
+        shot_id = validate_safe_id(str(shot.get("shot_id") or shot.get("id") or f"shot_{idx+1}"), "shot_id")
+        shot["shot_id"] = shot_id
+        speaker = (shot.get("speaker") or "Narrator").strip()
+        dialogue = shot.get("dialogue") or ""
+        visual_desc = shot.get("visual_description") or shot.get("description") or ""
+        shot_dur = float(shot.get("duration_seconds", PROVIDER_CLIP_SECONDS))
+        input_hash = _compute_shot_input_hash(visual_desc, dialogue, speaker, shot_dur)
         prev = existing_shots.get(shot_id)
-        if prev and prev.get("status") == "completed":
+        final_clip_out = str(resolve_confined_path(renders_dir, f"{shot_id}.mp4"))
+        can_reuse = False
+        if prev and prev.get("status") == "completed" and prev.get("input_hash") == input_hash and os.path.exists(final_clip_out):
+            try:
+                p_info = await asyncio.to_thread(probe, final_clip_out)
+                can_reuse = p_info.has_video and p_info.duration >= 1.0
+            except Exception:
+                can_reuse = False
+
+        if can_reuse and prev:
             records_by_idx[idx] = prev
         else:
             records_by_idx[idx] = {
                 "shot_id": shot_id,
+                "input_hash": input_hash,
                 "video_url": "",
                 "thumbnail_url": "",
-                "speaker": (shot.get("speaker") or "Narrator").strip(),
-                "dialogue": shot.get("dialogue") or "",
-                "prompt": shot.get("visual_description") or shot.get("description") or "",
-                "duration_seconds": float(shot.get("duration_seconds", PROVIDER_CLIP_SECONDS)),
-                "duration_sec": float(shot.get("duration_seconds", PROVIDER_CLIP_SECONDS)),
+                "speaker": speaker,
+                "dialogue": dialogue,
+                "prompt": visual_desc,
+                "duration_seconds": shot_dur,
+                "duration_sec": shot_dur,
                 "status": "queued",
                 "approved": False,
                 "version": (prev.get("version", 0) + 1) if prev else 1,
@@ -635,16 +711,16 @@ async def video_agent_node(state: FilmGraphState, config: RunnableConfig):
     await _sync_records()
 
     async def _process_single_shot(idx: int, shot: dict):
-        shot_id = shot.get("shot_id") or shot.get("id") or f"shot_{idx+1}"
+        shot_id = validate_safe_id(str(shot.get("shot_id") or shot.get("id") or f"shot_{idx+1}"), "shot_id")
         speaker = (shot.get("speaker") or "Narrator").strip()
         dialogue = shot.get("dialogue") or ""
         visual_desc = shot.get("visual_description") or shot.get("description") or ""
         shot_version = records_by_idx[idx].get("version", 1)
 
-        final_clip_out = os.path.join(renders_dir, f"{shot_id}.mp4")
-        thumb_path = os.path.join(renders_dir, f"thumb_{shot_id}.jpg")
+        final_clip_out = str(resolve_confined_path(renders_dir, f"{shot_id}.mp4"))
+        thumb_path = str(resolve_confined_path(renders_dir, f"thumb_{shot_id}.jpg"))
 
-        if existing_shots.get(shot_id, {}).get("status") == "completed" and os.path.exists(final_clip_out) and os.path.getsize(final_clip_out) > 50000:
+        if records_by_idx[idx].get("status") == "completed" and os.path.exists(final_clip_out):
             return records_by_idx[idx]
 
         records_by_idx[idx]["status"] = "rendering"
@@ -654,7 +730,7 @@ async def video_agent_node(state: FilmGraphState, config: RunnableConfig):
         ai_clip = None
         try:
             # 1. Generate unique scene keyframe
-            shot_scene_img = os.path.join(renders_dir, f"{shot_id}_scene.jpg")
+            shot_scene_img = str(resolve_confined_path(renders_dir, f"{shot_id}_scene.jpg"))
             img_path = None
             scene_context = visual_desc or dialogue or global_narrative
 
@@ -690,7 +766,7 @@ async def video_agent_node(state: FilmGraphState, config: RunnableConfig):
             if emitter:
                 await emitter.push("status", content=f"Rendering AI video for Shot {idx+1}/{len(shots)} ({speaker})...")
 
-            raw_clip_out = os.path.join(renders_dir, f"{shot_id}_raw.mp4")
+            raw_clip_out = str(resolve_confined_path(renders_dir, f"{shot_id}_raw.mp4"))
             char_match = next((c for c in characters if c.get("name", "").lower() == speaker.lower()), None)
             char_style = f" Character details: {char_match.get('description')}" if char_match and char_match.get("description") else ""
             motion_prompt = (
@@ -731,23 +807,34 @@ async def video_agent_node(state: FilmGraphState, config: RunnableConfig):
 
             shutil.copyfile(ai_clip, raw_clip_out)
             target_dur = float(shot.get("duration_seconds", PROVIDER_CLIP_SECONDS))
-            if clip_info.duration > target_dur + 0.1:
-                trim_cmd = [FFMPEG_BIN, "-y", "-i", ai_clip, "-t", str(target_dur), "-c", "copy", final_clip_out]
-                res = await asyncio.to_thread(lambda: subprocess.run(trim_cmd, capture_output=True))
-                if res.returncode != 0 or not os.path.exists(final_clip_out):
-                    reencode_cmd = [
-                        FFMPEG_BIN, "-y", "-i", ai_clip, "-t", str(target_dur),
-                        "-c:v", "libx264", "-preset", "fast", "-crf", str(settings.VIDEO_CRF),
-                        "-pix_fmt", "yuv420p", "-an", final_clip_out
-                    ]
-                    res = await asyncio.to_thread(lambda: subprocess.run(reencode_cmd, capture_output=True))
-                if res.returncode != 0 or not os.path.exists(final_clip_out):
-                    raise RuntimeError(f"Failed to trim Shot {idx+1} ({shot_id}) to {target_dur:.2f}s")
-                trimmed_info = await asyncio.to_thread(probe, final_clip_out)
-                real_duration = round(trimmed_info.duration, 3) if trimmed_info.duration > 0 else target_dur
-            else:
-                shutil.copyfile(ai_clip, final_clip_out)
-                real_duration = round(clip_info.duration, 3)
+            tmp_clip_out = str(resolve_confined_path(renders_dir, f".{shot_id}_tmp.mp4"))
+            try:
+                if clip_info.duration > target_dur + 0.1:
+                    trim_cmd = [FFMPEG_BIN, "-y", "-i", ai_clip, "-t", str(target_dur), "-c", "copy", tmp_clip_out]
+                    res = await asyncio.to_thread(lambda: subprocess.run(trim_cmd, capture_output=True))
+                    if res.returncode != 0 or not os.path.exists(tmp_clip_out):
+                        reencode_cmd = [
+                            FFMPEG_BIN, "-y", "-i", ai_clip, "-t", str(target_dur),
+                            "-c:v", "libx264", "-preset", "fast", "-crf", str(settings.VIDEO_CRF),
+                            "-pix_fmt", "yuv420p", "-an", tmp_clip_out
+                        ]
+                        res = await asyncio.to_thread(lambda: subprocess.run(reencode_cmd, capture_output=True))
+                    if res.returncode != 0 or not os.path.exists(tmp_clip_out):
+                        raise RuntimeError(f"Failed to trim Shot {idx+1} ({shot_id}) to {target_dur:.2f}s")
+                else:
+                    shutil.copyfile(ai_clip, tmp_clip_out)
+
+                trimmed_info = await asyncio.to_thread(probe, tmp_clip_out)
+                if not trimmed_info.has_video or trimmed_info.duration <= 0.1:
+                    raise RuntimeError(f"Validated clip for Shot {idx+1} ({shot_id}) is invalid")
+                real_duration = round(trimmed_info.duration, 3)
+                os.replace(tmp_clip_out, final_clip_out)
+            finally:
+                if os.path.exists(tmp_clip_out):
+                    try:
+                        os.unlink(tmp_clip_out)
+                    except OSError:
+                        pass
 
             thumb_cmd = [FFMPEG_BIN, "-y", "-ss", "00:00:01", "-i", final_clip_out, "-vframes", "1", thumb_path]
             await asyncio.to_thread(lambda: subprocess.run(thumb_cmd, capture_output=True))
@@ -856,7 +943,7 @@ async def confirm_assembly_node(state: FilmGraphState, config: RunnableConfig):
             link={"label": "Confirm Assembly", "target": "video_tab"}
         )
         await emitter.push("approval_request", stage="assembly")
-        resp = await emitter.wait_for_approval()
+        resp = await emitter.wait_for_approval("assembly")
         if resp.get("approved"):
             state["approval_states"]["assembly_confirmed"] = True
             await _safe_update_state(update_state_fn, state)

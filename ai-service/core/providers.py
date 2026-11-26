@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Any, Optional
 import asyncio
+import hashlib
 import json
 import os
 import re
@@ -517,13 +518,6 @@ class EdgeTTSAudioAdapter(BaseAudioProvider):
             resolved_voice = self.VOICESTUDIO_OR_CUSTOM_MAP[resolved_voice.lower()]
         elif "Neural" not in resolved_voice:
             resolved_voice = "en-US-ChristopherNeural"
-
-        if pitch == "+0Hz" and rate == "+0%":
-            for preset in self.VOICE_PRESETS.values():
-                if preset["voice"] == resolved_voice and (preset.get("pitch") != "+0Hz" or preset.get("rate") != "+0%"):
-                    pitch = preset["pitch"]
-                    rate = preset["rate"]
-                    break
         try:
             comm = edge_tts.Communicate(clean_text, resolved_voice, pitch=pitch, rate=rate)
             chunks = []
@@ -627,7 +621,7 @@ class EdgeTTSAudioAdapter(BaseAudioProvider):
 class ElevenLabsAudioAdapter(BaseAudioProvider):
     """Studio-grade voiceover provider powered by ElevenLabs with automatic fallback to EdgeTTS."""
 
-    _api_key_valid: bool | None = None
+    _invalid_key_hashes: set[str] = set()
 
     VOICE_PRESETS = {
         # Narrative & Dramatic
@@ -676,6 +670,10 @@ class ElevenLabsAudioAdapter(BaseAudioProvider):
         self.model_id = model_id
         self._fallback_provider = EdgeTTSAudioAdapter()
 
+    @staticmethod
+    def _key_hash(api_key: str) -> str:
+        return hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:16]
+
     async def generate_speech(self, text: str, voice_id: str = "pNInz6obpgDQGcFmaJgB", pitch: str = "+0Hz", rate: str = "+0%") -> str:
         import httpx
         import base64
@@ -684,7 +682,8 @@ class ElevenLabsAudioAdapter(BaseAudioProvider):
         if not clean_text:
             return ""
 
-        if ElevenLabsAudioAdapter._api_key_valid is False or not self.api_key:
+        key_hash = self._key_hash(self.api_key) if self.api_key else ""
+        if not self.api_key or key_hash in ElevenLabsAudioAdapter._invalid_key_hashes:
             return await self._fallback_provider.generate_speech(text, voice_id=voice_id, pitch=pitch, rate=rate)
 
         # Map EdgeTTS voice names if passed
@@ -714,12 +713,12 @@ class ElevenLabsAudioAdapter(BaseAudioProvider):
             async with httpx.AsyncClient(timeout=45.0) as client:
                 resp = await client.post(url, headers=headers, json=payload)
                 if resp.status_code == 200:
-                    ElevenLabsAudioAdapter._api_key_valid = True
+                    ElevenLabsAudioAdapter._invalid_key_hashes.discard(key_hash)
                     b64_audio = base64.b64encode(resp.content).decode("utf-8")
                     return f"data:audio/mp3;base64,{b64_audio}"
                 else:
                     if resp.status_code in (401, 403):
-                        ElevenLabsAudioAdapter._api_key_valid = False
+                        ElevenLabsAudioAdapter._invalid_key_hashes.add(key_hash)
                     print(f"[ElevenLabsAudioAdapter] API returned {resp.status_code}: {resp.text[:120]}. Falling back to EdgeTTS.")
         except Exception as e:
             print(f"[ElevenLabsAudioAdapter] Network or generation error: {e}. Falling back to EdgeTTS.")
@@ -797,8 +796,9 @@ class VoiceStudioAudioAdapter(BaseAudioProvider):
     def __init__(self, api_url: str = ""):
         self.api_url = (api_url or getattr(settings, "VOICESTUDIO_API_URL", "http://localhost:8080/v1")).rstrip("/")
         self._fallback_provider = EdgeTTSAudioAdapter()
+        self._voice_fallbacks: dict[str, str] = {}
 
-    async def generate_speech(self, text: str, voice_id: str = "default", pitch: str = "+0Hz", rate: str = "+0%", prompt: str = "") -> str:
+    async def generate_speech(self, text: str, voice_id: str = "default", pitch: str = "+0Hz", rate: str = "+0%", prompt: str = "", fallback_voice: str = "") -> str:
         import httpx
         import base64
 
@@ -826,15 +826,20 @@ class VoiceStudioAudioAdapter(BaseAudioProvider):
         except Exception as e:
             print(f"[VoiceStudio] Local instance unreachable at {self.api_url} ({e}). Falling back to EdgeTTS.")
 
-        return await self._fallback_provider.generate_speech(text, voice_id=voice_id, pitch=pitch, rate=rate)
+        edge_voice = fallback_voice or self._voice_fallbacks.get(voice_id.lower().strip(), "") or voice_id
+        return await self._fallback_provider.generate_speech(text, voice_id=edge_voice, pitch=pitch, rate=rate)
 
     def match_character_voice(self, char_name: str, char_role: str = "", description: str = "", gender: str = "") -> dict:
         name_lower = char_name.lower().strip()
+        voice_key = name_lower.replace(" ", "_")
         prompt = f"Expressive voice for {char_name}: {char_role}, {description}".strip()
         fallback = self._fallback_provider.match_character_voice(char_name, char_role, description, gender)
+        fallback_voice = fallback.get("voice", "en-US-ChristopherNeural")
+        self._voice_fallbacks[voice_key] = fallback_voice
 
         return {
-            "voice": name_lower.replace(" ", "_"),
+            "voice": voice_key,
+            "fallback_voice": fallback_voice,
             "voice_prompt": prompt,
             "label": fallback.get("label", char_name),
             "gender": fallback.get("gender", "male"),

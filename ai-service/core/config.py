@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -117,3 +118,21 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+_SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def validate_safe_id(value: str, label: str = "id") -> str:
+    """Validate that an identifier is a safe single path component (no slashes or '..')."""
+    if not value or not isinstance(value, str) or not _SAFE_ID_RE.fullmatch(value):
+        raise ValueError(f"Invalid {label}: {value!r}")
+    return value
+
+
+def resolve_confined_path(root: Path | str, *parts: str) -> Path:
+    """Resolve parts under root and reject any traversal or symlink escape outside root."""
+    root_path = Path(root).resolve()
+    target = Path(root_path, *parts).resolve()
+    if target != root_path and root_path not in target.parents:
+        raise ValueError(f"Path {target} escapes root {root_path}")
+    return target

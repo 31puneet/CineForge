@@ -2,10 +2,14 @@
 Unit tests for CineForge media processor and video pipeline.
 Tests Section 6 of CineForge Fix Spec.
 """
+import asyncio
+import math
 from pathlib import Path
+from unittest.mock import patch, MagicMock
 import pytest
+from fastapi import HTTPException
 
-from core.config import settings
+from core.config import settings, validate_safe_id, resolve_confined_path
 from core.media_processor import (
     probe,
     normalize_clip,
@@ -25,19 +29,31 @@ from core.media_processor import (
     ShotTooShortError,
     DurationMismatchError,
     FFPROBE_BIN,
+    _escape_ffmpeg_filter_path,
     _ff,
     _run
 )
-import math
-from agents.graph import validate_and_split_dialogue, PROVIDER_CLIP_SECONDS
+from agents.graph import (
+    validate_and_split_dialogue,
+    _normalize_script_shots,
+    match_role_override_rule,
+    PROVIDER_CLIP_SECONDS,
+)
+from agents.editor_agent import assemble_video
+from api.routes.workflow import RespondApprovalRequest, respond_approval, save_persisted_state
+from core.events import WorkflowEventEmitter, respond_to_approval
 from core.media_validator import (
     MediaValidator,
     detect_freezes,
     detect_shot_loops,
     detect_duplicate_shots
 )
-from core.providers import VoiceStudioAudioAdapter
-from core.video_generator import QuotaExceededError
+from core.providers import (
+    EdgeTTSAudioAdapter,
+    ElevenLabsAudioAdapter,
+    VoiceStudioAudioAdapter,
+)
+from core.video_generator import QuotaExceededError, generate_ai_video_clip
 
 
 @pytest.fixture
@@ -344,19 +360,40 @@ def test_shot_count_math_and_dialogue_splitting():
     expected_shots = math.ceil(target_duration / PROVIDER_CLIP_SECONDS)
     assert expected_shots == math.ceil(60.0 / settings.PROVIDER_CLIP_SECONDS)
 
-    # 2. Dialogue splitting check: max ~2.5 words per second reserving pre/post margin
+    # 2. Dialogue splitting check: preserves every word token in exact order
     shots = [
         {"shot_id": "shot_1", "duration_seconds": 6.0, "dialogue": "One two three four five six seven eight nine ten eleven twelve thirteen fourteen", "speaker": "Alex"},
         {"shot_id": "shot_2", "duration_seconds": 6.0, "dialogue": "", "speaker": "Alex"}
     ]
+    orig_tokens = " ".join(s["dialogue"] for s in shots).split()
     split_shots = validate_and_split_dialogue(shots, max_wps=2.5)
     # (6.0 - 2.0) * 2.5 = 10 words max in shot_1
     words_s1 = split_shots[0]["dialogue"].split()
     assert len(words_s1) <= 10
     words_s2 = split_shots[1]["dialogue"].split()
     assert len(words_s2) > 0
+    assert words_s1 + words_s2 == orig_tokens
 
-    # 3. Speaker change or final-shot overflow must raise ValueError instead of dropping dialogue
+    # 3. 1s shot leaves 0 speech budget (no 3-word floor) and raises on overflow
+    with pytest.raises(ValueError):
+        validate_and_split_dialogue(
+            [{"shot_id": "shot_1", "duration_seconds": 1.0, "dialogue": "Three short words", "speaker": "Alex"}],
+            max_wps=2.5,
+        )
+
+    # 4. Fractional duration redistribution borrows from earlier shots instead of inflating final shot > target
+    balanced = _normalize_script_shots(
+        [
+            {"shot_id": "shot_1", "duration_seconds": settings.PROVIDER_CLIP_SECONDS},
+            {"shot_id": "shot_2", "duration_seconds": settings.PROVIDER_CLIP_SECONDS},
+        ],
+        duration=min(8.5, settings.PROVIDER_CLIP_SECONDS + 0.5),
+    )
+    target_frac = min(8.5, settings.PROVIDER_CLIP_SECONDS + 0.5)
+    assert abs(sum(s["duration_seconds"] for s in balanced) - target_frac) <= 0.2
+    assert all(1.0 <= s["duration_seconds"] <= settings.PROVIDER_CLIP_SECONDS for s in balanced)
+
+    # 5. Speaker change or final-shot overflow must raise ValueError instead of dropping dialogue
     cross_speaker = [
         {"shot_id": "shot_1", "duration_seconds": 4.0, "dialogue": " ".join([f"w{i}" for i in range(15)]), "speaker": "Alex"},
         {"shot_id": "shot_2", "duration_seconds": 4.0, "dialogue": "", "speaker": "Bob"}
@@ -508,3 +545,141 @@ def test_duplicate_shots_and_validate_film(tmp_path, make_test_video, make_test_
     res = validator.validate_film(master, expected_duration=3.0, shot_paths=[shot_a], title_card_duration=0.0, credits_card_duration=0.0)
     assert res.passed is True
 
+
+
+def test_filter_path_escaping_with_commas(tmp_path):
+    comma_dir = tmp_path / "dir,with,commas"
+    comma_dir.mkdir(parents=True, exist_ok=True)
+    escaped = _escape_ffmpeg_filter_path(comma_dir / "title[1].ass")
+    assert r"\," in escaped
+    assert r"\[" in escaped and r"\]" in escaped
+
+    card = generate_title_card("Cine, Forge", "Test, Subtitle", duration=1.5, dst_path=comma_dir / "title.mp4")
+    assert card.exists()
+    assert probe(card).has_video is True
+
+
+def test_mux_shot_missing_audio_path_raises(tmp_path, make_test_video):
+    vid = tmp_path / "v.mp4"
+    make_test_video(vid, duration=2.0, fps=24, width=1280, height=720)
+    with pytest.raises(FileNotFoundError):
+        mux_shot(vid, tmp_path / "does_not_exist.mp3", tmp_path / "out.mp4", duration=2.0)
+
+    silent_out = tmp_path / "silent.mp4"
+    mux_shot(vid, None, silent_out, duration=2.0)
+    assert silent_out.exists()
+    assert probe(silent_out).has_audio is True
+
+
+def test_role_override_word_boundaries():
+    assert match_role_override_rule("Lauren") is None
+    matched = match_role_override_rule("Ren Vance")
+    assert matched is not None
+    assert matched["voice"] == "en-US-ChristopherNeural"
+
+
+def test_audio_provider_isolation_and_neutral_presets():
+    vs = VoiceStudioAudioAdapter()
+    sarah_cfg = vs.match_character_voice("Sarah", gender="female")
+    assert sarah_cfg["fallback_voice"].endswith("Neural")
+    assert sarah_cfg["gender"] == "female"
+
+    # ElevenLabs invalidation must be scoped per API key
+    key_bad = "el-invalid-key-123456"
+    key_good = "el-valid-key-789012"
+    ElevenLabsAudioAdapter._invalid_key_hashes.add(ElevenLabsAudioAdapter._key_hash(key_bad))
+    assert ElevenLabsAudioAdapter._key_hash(key_bad) in ElevenLabsAudioAdapter._invalid_key_hashes
+    assert ElevenLabsAudioAdapter._key_hash(key_good) not in ElevenLabsAudioAdapter._invalid_key_hashes
+    ElevenLabsAudioAdapter._invalid_key_hashes.discard(ElevenLabsAudioAdapter._key_hash(key_bad))
+
+    # EdgeTTS must preserve neutral +0Hz/+0% when explicit neutral preset requested
+    captured = {}
+
+    class FakeComm:
+        def __init__(self, text, voice, pitch="+0Hz", rate="+0%"):
+            captured.update({"text": text, "voice": voice, "pitch": pitch, "rate": rate})
+
+        async def stream(self):
+            yield {"type": "audio", "data": b"mp3data"}
+
+    edge = EdgeTTSAudioAdapter()
+    with patch("edge_tts.Communicate", FakeComm):
+        out_uri = asyncio.run(edge.generate_speech("Hello world", voice_id="normal_adult_male"))
+    assert out_uri.startswith("data:audio/mp3;base64,")
+    assert captured["voice"] == "en-US-ChristopherNeural"
+    assert captured["pitch"] == "+0Hz"
+    assert captured["rate"] == "+0%"
+
+
+def test_video_generator_non_quota_error(tmp_path):
+    img = tmp_path / "frame.jpg"
+    img.write_bytes(b"\xff\xd8\xff\xe0" + b"0" * 2048)
+
+    bad_client = MagicMock()
+    bad_client.endpoints = {}
+    bad_client.predict.side_effect = ValueError("Invalid argument: steps")
+
+    with patch("gradio_client.Client", return_value=bad_client), patch("gradio_client.handle_file", side_effect=lambda p: p):
+        with pytest.raises(RuntimeError) as exc_info:
+            generate_ai_video_clip(str(img), "test prompt", hf_token="tok", duration=4.0)
+    assert not isinstance(exc_info.value, QuotaExceededError)
+
+
+def test_stage_bound_approvals_and_path_confinement(tmp_path):
+    with pytest.raises(ValueError):
+        validate_safe_id("../evil", "project_id")
+    with pytest.raises(ValueError):
+        resolve_confined_path(tmp_path, "..", "escape.txt")
+
+    # Stage isolation in WorkflowEventEmitter
+    async def _check_events():
+        pid = f"evt_{tmp_path.name}"
+        emitter = WorkflowEventEmitter(pid)
+        task = asyncio.create_task(emitter.wait_for_approval("characters"))
+        await asyncio.sleep(0.01)
+        respond_to_approval(pid, True, stage="script")
+        await asyncio.sleep(0.02)
+        assert not task.done()
+        respond_to_approval(pid, True, stage="characters")
+        res = await asyncio.wait_for(task, timeout=1.0)
+        assert res["approved"] is True
+
+    asyncio.run(_check_events())
+
+    # Mismatched stage returns 409 Conflict; failed save raises HTTP 500 when requested
+    test_pid = "test_proj_stage_guard"
+    from api.routes.workflow import load_persisted_state, _memory_store, _dirty_projects, _get_cache_path
+    state = {
+        "project_id": test_pid,
+        "script_data": {"shots": [{"shot_id": "shot_1", "duration_seconds": 5.0}]},
+        "characters": [{"id": "char_1", "name": "Alex"}],
+        "approval_states": {"script_approved": True, "characters_approved": False},
+        "messages": [],
+    }
+    cache_file = Path(_get_cache_path(test_pid))
+    try:
+        save_persisted_state(test_pid, state, raise_on_error=True)
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(respond_approval(RespondApprovalRequest(project_id=test_pid, approved=True, stage="script")))
+        assert exc.value.status_code == 409
+
+        state["character_version"] = 99
+        with patch("builtins.open", side_effect=OSError("disk full")):
+            with pytest.raises(HTTPException) as save_exc:
+                save_persisted_state(test_pid, state, raise_on_error=True)
+        assert save_exc.value.status_code == 500
+        loaded = load_persisted_state(test_pid)
+        assert loaded is not None and loaded.get("character_version") == 99
+
+        with pytest.raises(ValueError):
+            asyncio.run(
+                assemble_video(
+                    {"project_id": test_pid, "script_data": {"shots": [{"shot_id": "../evil"}]}},
+                    {"configurable": {}},
+                )
+            )
+    finally:
+        _memory_store.pop(test_pid, None)
+        _dirty_projects.discard(test_pid)
+        if cache_file.exists():
+            cache_file.unlink()

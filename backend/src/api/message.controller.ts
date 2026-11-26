@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import mongoose from 'mongoose';
 import { z } from 'zod';
 import { Project } from '../models/Project';
+import { Message } from '../models/Message';
 import { Approval } from '../models/Approval';
 import { Job } from '../models/Job';
 import { env } from '../config/env';
@@ -83,6 +84,26 @@ export const getMessages = async (req: Request, res: Response): Promise<void> =>
     }
 
     let messages = project.messages || [];
+
+    if (messages.length === 0) {
+      const legacyDocs = await Message.find({
+        projectId: new mongoose.Types.ObjectId(projectId),
+      }).sort({ createdAt: 1 });
+      if (legacyDocs.length > 0) {
+        const migrated = legacyDocs.map((doc) => ({
+          role: doc.role,
+          content: doc.content,
+          attachments: [],
+          metadata: (doc.metadata || {}) as Record<string, unknown>,
+          timestamp: doc.createdAt || new Date(),
+        }));
+        await Project.updateOne(
+          { _id: projectId, userId },
+          { $set: { messages: migrated } }
+        );
+        messages = migrated;
+      }
+    }
 
     if (messages.length === 0) {
       try {
@@ -316,6 +337,8 @@ export const respondToApproval = async (req: Request, res: Response): Promise<vo
         project_id: projectId,
         approved,
         reason,
+        stage,
+        version,
       }),
     });
 
